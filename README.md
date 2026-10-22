@@ -6,6 +6,7 @@ Una biblioteca viva: un grupo de amigos junta textos (cuentos, poemas, letras) q
 - **Un texto** lleva título, autor y hasta **2000 palabras** (un cuento corto entra).
 - **Se vota** a favor o en contra (en contra pide un motivo de una línea). Con **4 votos a favor y al menos 2/3 a favor** el texto queda *validado*; si baja de la mitad a favor, vuelve a *en debate*. El grupo puede ajustar el umbral.
 - **El admin decide solo, si quiere** (extra, no reemplaza nada): al proponer puede marcar «Cargarlo ya validado» (sin votación), y en cualquier texto en debate puede apretar «Validar ahora» (su voto alcanza). Puede votar y proponer como todos. Lo validado así se ve marcado («Validado por Federico (admin)»); los demás igual pueden votar, pero los votos ya no lo mueven hasta que el admin lo devuelva a debate.
+- **Justificación opcional**: al proponer un texto (y al proponerlo para otra combinación) se puede escribir «lo agrego porque…» (hasta 500 caracteres). Se muestra arriba del texto, firmada por quien lo propuso, y cada combinación tiene la suya. Después la puede agregar, cambiar o sacar quien lo propuso (menú «Más») o el admin.
 - **Comentarios en cada texto**: un ícono de burbuja (con el número de comentarios) despliega o pliega la conversación de ese texto; por defecto no se ven. Cualquiera del grupo comenta (hasta 1000 caracteres) y borra los suyos; el admin borra cualquiera. Son del texto, no de la combinación: se ven en todas donde está. No cuentan para los votos y no se pierden si se edita el texto. En *Grupo* la actividad dice quién comentó, sin mostrar el contenido.
 - **En vivo**: si alguien propone o vota, a los demás les aparece al instante, sin recargar.
 - **Sin contraseñas**: se entra con un link de invitación y un nombre. El dispositivo queda como «vos»; en *Grupo* hay un «link para volver» para entrar desde otro.
@@ -17,7 +18,7 @@ Una biblioteca viva: un grupo de amigos junta textos (cuentos, poemas, letras) q
 | `static/` | La página: JavaScript sin framework (módulos ES), misma estética que la carta. Se publica tal cual, sin compilar. |
 | `supabase/schema.sql` | La base (Postgres). **Toda la seguridad está acá**: las tablas están cerradas y solo se entra por funciones que verifican quién sos. |
 | `dev/server.mjs` | Un servidor para probar en tu compu, con la misma base (PGlite = Postgres de verdad) y avisos en vivo. No hace falta Supabase para probar. |
-| `test/` | Pruebas de la base (36), del tiempo real (5) y de punta a punta con varias personas (`test/e2e/`, Python + Playwright). |
+| `test/` | Pruebas de la base (41), del tiempo real (5) y de punta a punta con varias personas (`test/e2e/`, Python + Playwright). |
 | `.github/workflows/mantener-despierta.yml` | Llama a la base una vez por día para que Supabase gratis no la pause. |
 
 **Seguridad, en criollo.** No hay mails ni contraseñas. Tu navegador genera una clave personal al azar y la base solo guarda su huella (sha256). Cada función de la base recibe esa clave, sabe quién sos y a qué grupo pertenecés, y solo muestra o cambia lo de tu grupo. Las claves que van en `static/config.js` (URL y clave *publishable*) son públicas por diseño: no dan acceso a nada que las funciones no permitan. **Nunca** pongas ahí la clave `secret` o `service_role`.
@@ -66,7 +67,7 @@ Abrí `https://TU-SITIO/#entrar/CODIGO_ADMIN` con el `codigo_admin` del paso 1.3
 **5. Que Supabase no pause la base**
 El plan gratis pausa los proyectos con poca actividad. Este repositorio trae un aviso diario: en GitHub, **Settings → Secrets and variables → Actions**, creá `SUPABASE_URL` y `SUPABASE_PUBLISHABLE_KEY` (los mismos valores de `config.js`). El flujo corre solo; podés probarlo a mano desde la pestaña *Actions → Mantener despierta la base → Run workflow*. (GitHub desactiva los flujos programados si el repositorio pasa 60 días sin actividad.) Si la base se pausara igual, se reactiva con un botón en el panel de Supabase.
 
-**Cuando el esquema cambia (actualizar la base).** Si te paso una versión nueva de `supabase/schema.sql`, volvé a pegarla entera en el SQL Editor y apretá Run: es seguro, no borra grupos, textos ni votos, y suma lo nuevo. Si la página nueva se publica antes que el esquema, la app avisa «La página y la base no coinciden». (Las versiones con «Validar ahora» del admin y con comentarios necesitan este paso.)
+**Cuando el esquema cambia (actualizar la base).** Si te paso una versión nueva de `supabase/schema.sql`, volvé a pegarla entera en el SQL Editor y apretá Run: es seguro, no borra grupos, textos ni votos, y suma lo nuevo. Si la página nueva se publica antes que el esquema, la app avisa «La página y la base no coinciden». (Las versiones con «Validar ahora» del admin, con comentarios y con justificación necesitan este paso.)
 
 **6. Copia de seguridad**
 En **Grupo → Copia de seguridad** el admin descarga todo (miembros, textos, votos y comentarios) en un JSON. Conviene hacerlo de vez en cuando.
@@ -78,6 +79,7 @@ En **Grupo → Copia de seguridad** el admin descarga todo (miembros, textos, vo
 - Editar un texto: cambiar el cuerpo reinicia los votos; corregir una errata (hasta 3 palabras, o el 2 %) no.
 - Cualquiera puede pedir que se retire un texto; el admin decide. El admin también puede borrar y expulsar.
 - Un texto puede estar en varias combinaciones y cada una se vota por separado.
+- La justificación es de cada combinación (no del texto) y no cuenta para votar. Al actualizar una base anterior, los textos que ya estaban quedan sin justificación y se anota como proponente a quien conserva el voto automático o, si no, a quien cargó el texto.
 - Los comentarios son de cada texto (no de la combinación) y no cuentan para votar. Cada quien borra los suyos; el admin, cualquiera. Si alguien se va del grupo, sus comentarios quedan.
 - Un planeta solo muestra sus propios textos y, debajo, las parejas donde aparece.
 - El admin puede cargar un texto ya validado o validar uno con «Validar ahora» (su voto pasa a favor). Eso deja una marca: los votos no lo mueven, ni bajar el umbral, ni expulsar a alguien. «Devolver a debate» saca la marca y el texto se juzga de nuevo solo por los votos (si alcanzan, queda validado igual). Si el admin cambia el cuerpo, se reinician los votos pero la validación sigue; si lo cambia otra persona, se pierde.
@@ -87,14 +89,15 @@ En **Grupo → Copia de seguridad** el admin descarga todo (miembros, textos, vo
 ## Pruebas
 
 ```bash
-npm test                      # la base (36 pruebas, Postgres real) y el cliente de tiempo real (5)
+npm test                      # la base (41 pruebas, Postgres real) y el cliente de tiempo real (5)
 npm run dev                   # en otra terminal, para las de punta a punta:
 python3 test/e2e/1_cuatro_personas_en_vivo.py
 python3 test/e2e/2_editar_retiro_exportar_expulsar.py
 python3 test/e2e/3_casos_borde.py
 python3 test/e2e/4_camino_de_produccion.py
 python3 test/e2e/5_admin_decide_solo.py
-python3 test/e2e/6_comentarios.py             # todas necesitan Playwright para Python: pip install playwright && playwright install chromium
+python3 test/e2e/6_comentarios.py
+python3 test/e2e/7_justificacion.py           # todas necesitan Playwright para Python: pip install playwright && playwright install chromium
 ```
 
 Lo que **no** se pudo probar sin un proyecto de Supabase real: el tiempo real contra el servicio de verdad (se probó, en un navegador, contra el servidor de desarrollo, que habla el mismo protocolo de Realtime por WebSocket: la prueba 4 usa el cliente empaquetado igual que en producción) y las políticas de permisos de Supabase (se probaron en un Postgres con los mismos roles). Por eso la primera vez conviene mirar en *Grupo* la línea «Conectado: los cambios aparecen al instante». Si dice que el tiempo real no está conectado, la app igual funciona: busca los cambios cada 45 segundos y al volver a la pestaña.

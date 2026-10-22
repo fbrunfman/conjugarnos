@@ -65,6 +65,7 @@ const MENSAJES = {
   voto_invalido: "Voto inválido.",
   falta_motivo: "Un voto en contra necesita un motivo de una línea.",
   motivo_largo: "El motivo es muy largo (máximo 200 caracteres).",
+  justificacion_larga: "La justificación es muy larga (máximo 500 caracteres).",
   falta_comentario: "Escribí el comentario.",
   comentario_largo: "El comentario es muy largo (máximo 1000 caracteres).",
   comentario_inexistente: "Ese comentario ya no existe.",

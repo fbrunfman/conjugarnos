@@ -1,5 +1,6 @@
 // Proponer un texto nuevo (o editar uno que ya está cargado).
-// Lleva título, autor y un máximo de palabras; se elige para qué combinaciones (un planeta o una pareja; el máximo de 12 lo cuida el código).
+// Lleva título, autor y un máximo de palabras; se elige para qué combinaciones (un planeta o una pareja; el máximo de 12 lo cuida el código)
+// y, si se quiere, una justificación: «lo agrego porque…» (se guarda en cada combinación elegida).
 // Quien administra puede además cargarlo ya validado, sin votación (casilla opcional).
 // Mientras escribís se guarda un borrador en este dispositivo, por si se cierra la pestaña a la mitad.
 import { R, E, yo, grupo, esAdmin } from "./estado.js";
@@ -28,7 +29,7 @@ export function montar(el, { combo = [], edicion = null } = {}) {
   const editando = !!edicion;
   const max = grupo().max_palabras;
   const borrador = !editando ? leerBorrador() : null;
-  const v = editando ? edicion : { titulo: "", autor: "", cuerpo: "", ...(borrador || {}) };
+  const v = editando ? edicion : { titulo: "", autor: "", cuerpo: "", justificacion: "", ...(borrador || {}) };
   let combos = combo.length ? [combo] : [];   // lista de combinaciones elegidas: [["saturn","pluto"], ["moon"]]
 
   el.innerHTML = `<section class="pantalla estrecha" aria-labelledby="tProp">
@@ -47,6 +48,9 @@ export function montar(el, { combo = [], edicion = null } = {}) {
         <div id="pSel"></div>
         <p><button type="button" class="boton sec" id="pAgregar" disabled>Agregar esta combinación</button></p>
       </fieldset>
+      <label class="campo"><span>Justificación (opcional)</span>
+        <textarea name="justificacion" rows="3" maxlength="500" placeholder="Lo agrego porque…">${esc(v.justificacion || "")}</textarea>
+        <small>Por qué este texto va con esas combinaciones. Se muestra junto al texto, firmada con tu nombre.</small></label>
       ${esAdmin() ? `<label class="check"><input type="checkbox" name="validar"><span><b>Cargarlo ya validado</b>
         <small>Como admin, queda validado desde el principio en todas las combinaciones que elijas, sin votación. Los demás igual pueden votar. Si no la marcás, se propone como cualquier otro.</small></span></label>` : ""}`}
       <p class="ayuda">Subí lo que puedas compartir con tu grupo. Si es una obra con derechos de autor, mejor un fragmento que el texto entero.</p>
@@ -57,7 +61,7 @@ export function montar(el, { combo = [], edicion = null } = {}) {
 
   const f = $("#fProp", el);
   const valor = (n) => f.elements[n].value;
-  const campos = () => ({ titulo: valor("titulo"), autor: valor("autor"), cuerpo: valor("cuerpo") });
+  const campos = () => ({ titulo: valor("titulo"), autor: valor("autor"), cuerpo: valor("cuerpo"), justificacion: f.elements.justificacion ? valor("justificacion") : "" });
 
   // ---- contador de palabras ----
   const cuenta = () => {
@@ -122,7 +126,8 @@ export function montar(el, { combo = [], edicion = null } = {}) {
       else return mostrar("Elegí al menos una combinación de planetas.");
     }
     const validar = !editando && esAdmin() && !!f.elements.validar && f.elements.validar.checked;
-    const extra = validar ? { p_validar: true } : {};
+    const justificacion = c.justificacion.trim();
+    const extra = { ...(validar ? { p_validar: true } : {}), ...(justificacion ? { p_justificacion: justificacion } : {}) };
     const boton = $("#pEnviar", el);
     boton.disabled = true;
     try {

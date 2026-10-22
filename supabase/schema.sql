@@ -80,6 +80,8 @@ create table if not exists vinculo (
   forzado     boolean not null default false,   -- el admin lo validó él solo: los votos no lo mueven (hasta que lo devuelva a debate)
   forzado_por uuid references miembro(id) on delete set null,
   forzado_en  timestamptz,
+  propuesto_por uuid references miembro(id) on delete set null,   -- quien propuso este texto para esta combinación
+  justificacion text check (justificacion is null or length(btrim(justificacion)) between 1 and 500),   -- «lo agrego porque…» (opcional)
   creado      timestamptz not null default now(),
   check (planeta_b is null or array_position(_planetas(), planeta_a) < array_position(_planetas(), planeta_b))
 );
@@ -101,6 +103,17 @@ create table if not exists voto (
   primary key (vinculo_id, miembro_id),
   check (valor = 'favor' or motivo is not null)
 );
+
+-- Si la base ya existía de antes: se suman la justificación y quién propuso cada texto. Para lo que ya estaba, quien lo propuso es
+-- quien conserva el voto automático o, si ya no, quien cargó el texto. (Esto corre una sola vez: cuando la columna todavía no existe.)
+do $$ begin
+  if not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'vinculo' and column_name = 'propuesto_por') then
+    alter table vinculo add column propuesto_por uuid references miembro(id) on delete set null;
+    update vinculo v set propuesto_por = coalesce((select o.miembro_id from voto o where o.vinculo_id = v.id and o.auto limit 1),
+                                                  (select t.cargado_por from texto t where t.id = v.texto_id));
+  end if;
+end $$;
+alter table vinculo add column if not exists justificacion text check (justificacion is null or length(btrim(justificacion)) between 1 and 500);
 
 -- Un comentario es de un texto (se ve en todas las combinaciones donde está). Si la persona se va del grupo, el comentario queda.
 create table if not exists comentario (
@@ -313,7 +326,7 @@ begin
           from vinculo where grupo_id = m.grupo_id group by planeta_a, planeta_b) x), '[]'::jsonb);
 end $$;
 
--- Todo lo de una combinación exacta: los textos, su estado, los votos con nombre y motivo y los comentarios de cada texto.
+-- Todo lo de una combinación exacta: los textos, su estado, la justificación de quien lo propuso, los votos con nombre y motivo y los comentarios de cada texto.
 create or replace function combinacion(p_clave text, p_a text, p_b text default null) returns jsonb
 language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare m miembro := _yo(p_clave); c jsonb := _combo(p_a, p_b);
@@ -323,6 +336,7 @@ begin
       jsonb_build_object(
         'vinculo_id', v.id, 'estado', v.estado, 'creado', v.creado,
         'forzado', v.forzado, 'forzado_por', (select x.nombre from miembro x where x.id = v.forzado_por),
+        'justificacion', v.justificacion, 'propuesto_por', (select x.nombre from miembro x where x.id = v.propuesto_por), 'propuesto_por_id', v.propuesto_por,
         'texto', jsonb_build_object('id', t.id, 'titulo', t.titulo, 'autor', t.autor, 'cuerpo', t.cuerpo, 'palabras', t.palabras,
                   'cargado_por', mp.nombre, 'cargado_por_id', t.cargado_por, 'editado', t.editado,
                   'retiro_pedido', t.retiro_pedido_por is not null, 'retiro_motivo', t.retiro_motivo,
@@ -386,15 +400,18 @@ end $$;
 
 -- p_combinaciones: [["saturn","pluto"], ["saturn"]]  (una pareja, o un planeta solo)
 -- p_validar (solo admin): el texto queda validado desde el principio en todas las combinaciones, sin votación.
+-- p_justificacion (opcional, hasta 500 caracteres): por qué se propone; se guarda en cada combinación elegida.
 drop function if exists proponer(text, text, text, text, text, text, text, jsonb);   -- la firma de antes (con fuente, traductor y tipo)
 drop function if exists proponer(text, text, text, text, jsonb);                    -- la firma de antes (sin p_validar)
+drop function if exists proponer(text, text, text, text, jsonb, boolean);           -- la firma de antes (sin p_justificacion)
 create or replace function proponer(p_clave text, p_titulo text, p_autor text, p_cuerpo text, p_combinaciones jsonb,
-                                    p_validar boolean default false) returns jsonb
+                                    p_validar boolean default false, p_justificacion text default null) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare m miembro := _yo(p_clave); g grupo; t texto; v vinculo; combo jsonb; combos jsonb[] := '{}'; ids uuid[] := '{}';
-        n int; ya uuid; el jsonb;
+        n int; ya uuid; el jsonb; j text := nullif(btrim(coalesce(p_justificacion, '')), '');
 begin
   if coalesce(p_validar, false) then perform _admin(m); end if;
+  if j is not null and length(j) > 500 then raise exception 'justificacion_larga'; end if;
   select * into g from grupo where id = m.grupo_id;
   if jsonb_typeof(p_combinaciones) is distinct from 'array' or jsonb_array_length(p_combinaciones) = 0 then raise exception 'sin_combinacion'; end if;
   if jsonb_array_length(p_combinaciones) > 12 then raise exception 'demasiadas_combinaciones'; end if;
@@ -415,7 +432,8 @@ begin
   values (g.id, btrim(p_titulo), btrim(p_autor), btrim(p_cuerpo), n, m.id)
   returning * into t;
   foreach combo in array combos loop
-    insert into vinculo (texto_id, grupo_id, planeta_a, planeta_b) values (t.id, g.id, combo->>'a', combo->>'b') returning * into v;
+    insert into vinculo (texto_id, grupo_id, planeta_a, planeta_b, propuesto_por, justificacion)
+    values (t.id, g.id, combo->>'a', combo->>'b', m.id, j) returning * into v;
     insert into voto (vinculo_id, miembro_id, valor, auto) values (v.id, m.id, 'favor', true);
     perform _recalcular(v.id);
     if coalesce(p_validar, false) then perform _forzar(v.id, m.id); end if;
@@ -426,21 +444,38 @@ end $$;
 
 -- Proponer un texto que ya está cargado a otra combinación.
 drop function if exists agregar_combinacion(text, uuid, text, text);   -- la firma de antes (sin p_validar)
-create or replace function agregar_combinacion(p_clave text, p_texto uuid, p_a text, p_b text default null, p_validar boolean default false) returns jsonb
+drop function if exists agregar_combinacion(text, uuid, text, text, boolean);   -- la firma de antes (sin p_justificacion)
+create or replace function agregar_combinacion(p_clave text, p_texto uuid, p_a text, p_b text default null, p_validar boolean default false,
+                                               p_justificacion text default null) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
-declare m miembro := _yo(p_clave); t texto; combo jsonb := _combo(p_a, p_b); v vinculo;
+declare m miembro := _yo(p_clave); t texto; combo jsonb := _combo(p_a, p_b); v vinculo; j text := nullif(btrim(coalesce(p_justificacion, '')), '');
 begin
   if coalesce(p_validar, false) then perform _admin(m); end if;
+  if j is not null and length(j) > 500 then raise exception 'justificacion_larga'; end if;
   select * into t from texto where id = p_texto and grupo_id = m.grupo_id;
   if not found then raise exception 'texto_inexistente'; end if;
   begin
-    insert into vinculo (texto_id, grupo_id, planeta_a, planeta_b) values (t.id, t.grupo_id, combo->>'a', combo->>'b') returning * into v;
+    insert into vinculo (texto_id, grupo_id, planeta_a, planeta_b, propuesto_por, justificacion)
+    values (t.id, t.grupo_id, combo->>'a', combo->>'b', m.id, j) returning * into v;
   exception when unique_violation then raise exception 'ya_propuesto';
   end;
   insert into voto (vinculo_id, miembro_id, valor, auto) values (v.id, m.id, 'favor', true);
   perform _recalcular(v.id);
   if coalesce(p_validar, false) then perform _forzar(v.id, m.id); end if;
   return jsonb_build_object('vinculo_id', v.id);
+end $$;
+
+-- Poner, cambiar o sacar la justificación de un texto en una combinación: quien lo propuso, o el admin. Vacía = sin justificación.
+create or replace function justificar(p_clave text, p_vinculo uuid, p_justificacion text) returns jsonb
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare m miembro := _yo(p_clave); v vinculo; j text := nullif(btrim(coalesce(p_justificacion, '')), '');
+begin
+  select * into v from vinculo where id = p_vinculo and grupo_id = m.grupo_id;
+  if not found then raise exception 'vinculo_inexistente'; end if;
+  if m.rol <> 'admin' and v.propuesto_por is distinct from m.id then raise exception 'sin_permiso'; end if;
+  if j is not null and length(j) > 500 then raise exception 'justificacion_larga'; end if;
+  update vinculo set justificacion = j where id = v.id;
+  return jsonb_build_object('ok', true);
 end $$;
 
 -- ---------- votar ----------
@@ -692,6 +727,7 @@ begin
         'combinaciones', coalesce((select jsonb_agg(jsonb_build_object(
             'planetas', case when v.planeta_b is null then jsonb_build_array(v.planeta_a) else jsonb_build_array(v.planeta_a, v.planeta_b) end,
             'estado', v.estado, 'validado_por_admin', v.forzado,
+            'propuesto_por', (select nombre from miembro where id = v.propuesto_por), 'justificacion', v.justificacion,
             'votos', coalesce((select jsonb_agg(jsonb_build_object('nombre', mv.nombre, 'valor', o.valor, 'motivo', o.motivo) order by o.cambiado)
                                from voto o join miembro mv on mv.id = o.miembro_id where o.vinculo_id = v.id), '[]'::jsonb)))
           from vinculo v where v.texto_id = t.id), '[]'::jsonb)) order by t.creado)
@@ -711,7 +747,7 @@ do $$ declare f record; begin
   for f in select p.oid::regprocedure as sig from pg_proc p join pg_namespace n on n.oid = p.pronamespace
            where n.nspname = 'public' and p.prokind = 'f'
              and p.proname in ('ping', 'unirse', 'sesion', 'grilla', 'combinacion', 'miembros', 'actividad', 'proponer',
-                               'agregar_combinacion', 'votar', 'quitar_voto', 'validar_ya', 'quitar_validacion', 'editar_texto', 'pedir_retiro', 'retiros', 'descartar_pedido',
+                               'agregar_combinacion', 'justificar', 'votar', 'quitar_voto', 'validar_ya', 'quitar_validacion', 'editar_texto', 'pedir_retiro', 'retiros', 'descartar_pedido',
                                'borrar_texto', 'quitar_combinacion', 'comentar', 'borrar_comentario', 'ajustar_umbral', 'expulsar', 'exportar')
   loop
     if exists (select 1 from pg_roles where rolname = 'anon') then execute format('grant execute on function %s to anon', f.sig); end if;

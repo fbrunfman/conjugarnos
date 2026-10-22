@@ -161,6 +161,9 @@ fieldset.combos legend { padding: 0 6px; font-weight: 600; }
 .cmb-text p { margin: 0 0 .9em; } .cmb-text p:last-child { margin-bottom: 0; }
 .tx-cuerpo:not(.abierto) { max-height: 9.5em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 60%, transparent); mask-image: linear-gradient(#000 60%, transparent); }
 .leer { margin-top: 6px; }
+.tx-just { margin: 12px 0 0; padding: 8px 12px; border-left: 3px solid var(--line-strong); border-radius: 0 8px 8px 0; background: var(--hover); }
+.tx-just-t { margin: 0; color: var(--ink-2); font-size: 12.5px; font-weight: 600; }
+.tx-just-c { margin: 2px 0 0; font-size: 14.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .tx-pie { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
 .tx-pie .leer { margin-top: 0; }
 .com-btn { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; min-height: 38px; min-width: 38px; justify-content: center; padding: 0 9px; border: 1px solid transparent; border-radius: 8px; background: none; color: var(--ink-2); font-weight: 600; font-size: 14px; }

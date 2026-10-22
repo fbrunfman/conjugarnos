@@ -95,12 +95,14 @@ function tarjeta(f) {
   const otrosVotos = [...f.favor, ...f.contra].some((v) => v.nombre !== yo().nombre);
   const nCom = (t.comentarios || []).length;
   const puedeEditar = esAdmin() || t.cargado_por_id === yo().id;
+  const puedeJustificar = esAdmin() || f.propuesto_por_id === yo().id;
   const puedeQuitar = esAdmin() || (t.cargado_por_id === yo().id && !otrosVotos);
   return `<article class="tx ${f.estado}" data-v="${id}" data-t="${t.id}" aria-labelledby="tt-${id}">
     <header class="tx-cab"><h4 class="tx-tit" id="tt-${id}">${esc(t.titulo)}</h4><span class="pill ${f.estado}">${f.estado === "validado" ? "Validado" : "En debate"}</span></header>
     <p class="tx-meta"><span class="mp-au">${esc(t.autor)}</span></p>
     <p class="tx-meta menor">${plural(t.palabras, "palabra", "palabras")} · cargado por ${esc(t.cargado_por || "alguien que ya no está")}${t.editado ? " · editado" : ""}</p>
     ${t.retiro_pedido ? `<p class="nota" role="note">Se pidió retirar este texto${t.retiro_motivo ? `: ${esc(t.retiro_motivo)}` : ""}. Lo decide quien administra el grupo.</p>` : ""}
+    ${f.justificacion ? `<div class="tx-just"><p class="tx-just-t">Justificación de ${esc(f.propuesto_por || "quien lo propuso")}</p><p class="tx-just-c">${esc(f.justificacion)}</p></div>` : ""}
     <div class="tx-cuerpo cmb-text${abierto ? " abierto" : ""}" id="cu-${id}">${cuerpoHTML(t.cuerpo)}</div>
     <div class="tx-pie">
       ${largo ? `<button type="button" class="enlace leer" data-leer aria-expanded="${abierto}" aria-controls="cu-${id}">${abierto ? "Mostrar menos" : `Leer completo (${t.palabras} palabras)`}</button>` : ""}
@@ -126,6 +128,7 @@ function tarjeta(f) {
     </div>
     <details class="menu"><summary>Más</summary><div class="menu-b">
       ${puedeEditar ? `<button type="button" class="enlace" data-acc="editar">Editar el texto</button>` : ""}
+      ${puedeJustificar ? `<button type="button" class="enlace" data-acc="justificar">${f.justificacion ? "Cambiar la justificación" : "Agregar una justificación"}</button>` : ""}
       <button type="button" class="enlace" data-acc="agregar">Proponerlo para otra combinación</button>
       ${t.retiro_pedido ? (esAdmin() ? `<button type="button" class="enlace" data-acc="descartar">Dejarlo (descartar el pedido)</button>` : "") : `<button type="button" class="enlace" data-acc="retiro">Pedir que se retire</button>`}
       ${puedeQuitar ? `<button type="button" class="enlace" data-acc="quitar">Sacarlo de esta combinación</button>` : ""}
@@ -165,7 +168,7 @@ function pintar() {
   // lo que cambió desde la última vez, marcado un momento
   const nuevas = new Map();
   for (const f of filas) {
-    const firma = `${f.estado}|${f.forzado ? "a" : ""}|${f.favor.length}|${f.contra.length}|${(f.texto.comentarios || []).length}`;
+    const firma = `${f.estado}|${f.forzado ? "a" : ""}|${f.favor.length}|${f.contra.length}|${(f.texto.comentarios || []).length}|${(f.justificacion || "").length}`;
     nuevas.set(f.vinculo_id, firma);
     if (!primera && firmas.get(f.vinculo_id) !== firma) marcar(f.vinculo_id);
   }
@@ -301,6 +304,12 @@ async function accion(que, f) {
   try {
     if (que === "editar") { E.editando = { texto: t, volver: location.hash, forzado: !!f.forzado }; location.hash = "#editar"; return; }
     if (que === "agregar") return agregar(t);
+    if (que === "justificar") {
+      const j = await pedirJustificacion(f);
+      if (j === null) return;
+      await R("justificar", { p_vinculo: f.vinculo_id, p_justificacion: j });
+      aviso(j ? "Guardada la justificación." : "Se quitó la justificación.");
+    }
     if (que === "retiro") {
       const m = await pedirTexto({ titulo: "Pedir que se retire este texto", ayuda: "Lo ven todos y lo decide quien administra el grupo.", etiqueta: "Motivo", ok: "Pedir retiro", max: 300 });
       if (m === null) return;
@@ -319,9 +328,21 @@ async function accion(que, f) {
   await actualizar();
 }
 
+/** Pide la justificación de un texto en esta combinación. Devuelve el texto (vacío = sin justificación), o null si se cancela. */
+function pedirJustificacion(f) {
+  return dialogo(`<form method="dialog" class="dlg-f"><h2>Justificación</h2>
+    <p>Por qué «${esc(f.texto.titulo)}» va con ${esc(etiqueta(ids))}. Se muestra junto al texto, firmada con el nombre de quien lo propuso. Si la dejás vacía, se saca.</p>
+    <label class="campo"><span>Justificación (opcional)</span><textarea name="j" rows="5" maxlength="500" placeholder="Lo agrego porque…" autofocus>${esc(f.justificacion || "")}</textarea></label>
+    <div class="dlg-b"><button type="button" class="boton sec" data-cerrar>Cancelar</button><button type="submit" class="boton">Guardar</button></div></form>`, {
+    alMontar: (d, cerrar) => d.querySelector("form").addEventListener("submit", (e) => { e.preventDefault(); cerrar(d.querySelector("textarea").value.trim()); }),
+  });
+}
+
 function agregar(t) {
   return dialogo(`<form method="dialog" class="dlg-f"><h2>Proponer «${esc(t.titulo)}» para otra combinación</h2>
-    <p>Elegí uno o dos planetas.</p><div id="dSel"></div><p class="error" id="dErr" role="alert" hidden></p>
+    <p>Elegí uno o dos planetas.</p><div id="dSel"></div>
+    <label class="campo"><span>Justificación (opcional)</span><textarea name="j" rows="3" maxlength="500" placeholder="Lo agrego porque…"></textarea></label>
+    <p class="error" id="dErr" role="alert" hidden></p>
     <div class="dlg-b"><button type="button" class="boton sec" data-cerrar>Cancelar</button><button type="submit" class="boton" id="dOk" disabled>Proponer</button></div></form>`, {
     ancho: true,
     alMontar: (d, cerrar) => {
@@ -331,7 +352,8 @@ function agregar(t) {
         const c = sel.obtener();
         if (!c.length) return;
         try {
-          await R("agregar_combinacion", { p_texto: t.id, p_a: c[0], p_b: c[1] || null });
+          const j = d.querySelector('textarea[name="j"]').value.trim();
+          await R("agregar_combinacion", { p_texto: t.id, p_a: c[0], p_b: c[1] || null, ...(j ? { p_justificacion: j } : {}) });
           cerrar(c);
         } catch (x) { const er = $("#dErr", d); er.textContent = mensaje(x); er.hidden = false; }
       });

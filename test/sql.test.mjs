@@ -1,6 +1,7 @@
 // Pruebas del esquema contra una base Postgres real. Uso: node test/sql.test.mjs
 import assert from "node:assert/strict";
-import { nuevaBase, rpc, clave, palabras } from "./harness.mjs";
+import fs from "node:fs";
+import { nuevaBase, rpc, clave, palabras, SCHEMA } from "./harness.mjs";
 
 let ok = 0, mal = 0;
 async function prueba(nombre, fn) {
@@ -538,6 +539,99 @@ await prueba("comentarios: comentar y borrar avisan al canal del grupo", async (
   const topic1 = "g:" + (await R("sesion", { p_clave: A })).grupo.id;
   assert.equal(alComentar, 1); assert.equal(avisos.length, 2);
   assert.ok(avisos.every((a) => a.topic === topic1 && a.event === "cambio"));
+});
+
+await prueba("justificación: es opcional, se guarda en cada combinación elegida y dice quién propuso", async () => {
+  const t = await R("proponer", { p_clave: A, ...propuesta({ p_titulo: "Con justificación", p_autor: "Q", p_combinaciones: [["neptune", "pluto"], ["moon"]],
+                                                              p_justificacion: "  Lo agrego porque habla de disolverse en los demás.  " }) });
+  for (const [a, b] of [["neptune", "pluto"], ["moon", null]]) {
+    const f = await fila(B, a, b, "Con justificación");
+    assert.equal(f.justificacion, "Lo agrego porque habla de disolverse en los demás.");     // sin espacios de más
+    assert.equal(f.propuesto_por, "Ana"); assert.ok(f.propuesto_por_id);
+  }
+  assert.equal(t.vinculos.length, 2);
+  const sin = await R("proponer", { p_clave: A, ...propuesta({ p_titulo: "Sin justificación", p_autor: "Q", p_combinaciones: [["mercury"]] }) });
+  assert.equal((await fila(B, "mercury", null, "Sin justificación")).justificacion, null);
+  await R("proponer", { p_clave: A, ...propuesta({ p_titulo: "Justificación en blanco", p_autor: "Q", p_combinaciones: [["jupiter"]], p_justificacion: "   " }) });
+  assert.equal((await fila(B, "jupiter", null, "Justificación en blanco")).justificacion, null);   // en blanco = sin justificación
+  await falla(R("proponer", { p_clave: A, ...propuesta({ p_titulo: "Larga", p_autor: "Q", p_combinaciones: [["uranus"]], p_justificacion: "x".repeat(501) }) }), "justificacion_larga");
+  assert.equal((await fila(B, "uranus", null, "Larga")), undefined);                               // no quedó nada a medias
+  await R("proponer", { p_clave: A, ...propuesta({ p_titulo: "Justo 500", p_autor: "Q", p_combinaciones: [["uranus"]], p_justificacion: "y".repeat(500) }) });
+  assert.equal((await fila(B, "uranus", null, "Justo 500")).justificacion.length, 500);
+  assert.ok(sin.texto_id);
+});
+
+await prueba("justificación: cada combinación guarda la suya y a quién la propuso al agregar un texto ya cargado", async () => {
+  const t = await R("proponer", { p_clave: A, ...propuesta({ p_titulo: "Para sumar", p_autor: "Q", p_combinaciones: [["sun"]], p_justificacion: "De Ana" }) });
+  const v = await R("agregar_combinacion", { p_clave: B, p_texto: t.texto_id, p_a: "sun", p_b: "venus", p_justificacion: "De Beto" });
+  const v2 = await R("agregar_combinacion", { p_clave: C, p_texto: t.texto_id, p_a: "sun", p_b: "mars" });
+  const a = await fila(C, "sun", null, "Para sumar"), b = await fila(C, "sun", "venus", "Para sumar"), c = await fila(C, "sun", "mars", "Para sumar");
+  assert.deepEqual([a.justificacion, a.propuesto_por], ["De Ana", "Ana"]);
+  assert.deepEqual([b.justificacion, b.propuesto_por], ["De Beto", "Beto"]);
+  assert.deepEqual([c.justificacion, c.propuesto_por], [null, "Cami"]);
+  await falla(R("agregar_combinacion", { p_clave: B, p_texto: t.texto_id, p_a: "sun", p_b: "saturn", p_justificacion: "z".repeat(501) }), "justificacion_larga");
+  assert.ok(v.vinculo_id && v2.vinculo_id);
+});
+
+await prueba("justificación: la cambia quien propuso o el admin; vacía la saca", async () => {
+  const t = await R("proponer", { p_clave: A, ...propuesta({ p_titulo: "A justificar", p_autor: "Q", p_combinaciones: [["saturn"]] }) });
+  const id = t.vinculos[0];
+  const ver = async () => (await fila(B, "saturn", null, "A justificar")).justificacion;
+  assert.equal(await ver(), null);
+  await R("justificar", { p_clave: A, p_vinculo: id, p_justificacion: " Ahora sí: por Saturno. " });            // quien propuso, aunque no tuviera
+  assert.equal(await ver(), "Ahora sí: por Saturno.");
+  await falla(R("justificar", { p_clave: B, p_vinculo: id, p_justificacion: "no puedo" }), "sin_permiso");     // otra persona del grupo
+  await falla(R("justificar", { p_clave: X, p_vinculo: id, p_justificacion: "otro grupo" }), "vinculo_inexistente");
+  await falla(R("justificar", { p_clave: A, p_vinculo: id, p_justificacion: "x".repeat(501) }), "justificacion_larga");
+  await R("justificar", { p_clave: ADM, p_vinculo: id, p_justificacion: "Lo ajusta el admin" });             // el admin, el de cualquiera
+  assert.equal(await ver(), "Lo ajusta el admin");
+  await R("justificar", { p_clave: A, p_vinculo: id, p_justificacion: "" });
+  assert.equal(await ver(), null);
+  await R("justificar", { p_clave: A, p_vinculo: id, p_justificacion: null });                                 // null también es «sin justificación»
+  await falla(R("justificar", { p_clave: A, p_vinculo: "00000000-0000-0000-0000-000000000000", p_justificacion: "x" }), "vinculo_inexistente");
+  await falla(R("justificar", { p_clave: "corta", p_vinculo: id, p_justificacion: "x" }), "no_autorizado");
+  // no toca votos ni estado
+  const f = await fila(B, "saturn", null, "A justificar");
+  assert.equal(f.estado, "debate"); assert.equal(f.favor.length, 1);
+});
+
+await prueba("justificación: va en la copia de seguridad, con quién propuso", async () => {
+  await R("proponer", { p_clave: B, ...propuesta({ p_titulo: "Copia con justificación", p_autor: "Q", p_combinaciones: [["venus"]], p_justificacion: "Va en la copia" }) });
+  const ex = await R("exportar", { p_clave: ADM });
+  const c = ex.textos.find((x) => x.titulo === "Copia con justificación").combinaciones[0];
+  assert.equal(c.justificacion, "Va en la copia"); assert.equal(c.propuesto_por, "Beto");
+});
+
+await prueba("actualizar la base: volver a correr el esquema no pierde nada, y una base anterior suma la justificación y quién propuso", async () => {
+  const esquema = fs.readFileSync(SCHEMA, "utf8");
+  const d = await nuevaBase();
+  const Q = (n, a) => rpc(d, n, a);
+  const g2 = (await d.query(`select crear_grupo('Vieja') as r`)).rows[0].r;
+  await Q("unirse", { p_codigo: g2.codigo_admin, p_nombre: "Admin", p_clave: clave(200) });
+  await Q("unirse", { p_codigo: g2.codigo, p_nombre: "Uno", p_clave: clave(201) });
+  await Q("unirse", { p_codigo: g2.codigo, p_nombre: "Dos", p_clave: clave(202) });
+  const t = await Q("proponer", { p_clave: clave(201), p_titulo: "Vieja", p_autor: "Z", p_cuerpo: "texto", p_combinaciones: [["sun"], ["moon"]], p_justificacion: "nueva" });
+  const mars = await Q("agregar_combinacion", { p_clave: clave(202), p_texto: t.texto_id, p_a: "mars" });
+  await Q("agregar_combinacion", { p_clave: clave(202), p_texto: t.texto_id, p_a: "venus" });                    // Dos lo propuso y conserva su voto automático
+  await Q("votar", { p_clave: clave(202), p_vinculo: mars.vinculo_id, p_valor: "contra", p_motivo: "no" });   // Dos cambió su voto: ya no es el automático
+  await d.exec("delete from voto where vinculo_id = '" + t.vinculos[1] + "' and auto");                         // y en la Luna ya no queda el voto automático
+  // se vuelve a correr el esquema tal cual: nada cambia
+  await d.exec(esquema);
+  const quien = async () => (await d.query(`select planeta_a, (select nombre from miembro where id = propuesto_por) as q, justificacion from vinculo order by planeta_a`)).rows;
+  assert.deepEqual(await quien(), [{ planeta_a: "mars", q: "Dos", justificacion: null }, { planeta_a: "moon", q: "Uno", justificacion: "nueva" }, { planeta_a: "sun", q: "Uno", justificacion: "nueva" }, { planeta_a: "venus", q: "Dos", justificacion: null }]);
+  // una base anterior: sin las dos columnas nuevas
+  await d.exec("alter table vinculo drop column propuesto_por, drop column justificacion");
+  await d.exec(esquema);
+  const r = await quien();
+  assert.deepEqual(r.map((x) => [x.planeta_a, x.q, x.justificacion]),
+    [["mars", "Uno", null], ["moon", "Uno", null], ["sun", "Uno", null], ["venus", "Dos", null]]);     // con voto automático, ese; si no, quien cargó el texto; sin justificación
+  // y volver a correrlo otra vez no reasigna a nadie
+  await d.exec("update vinculo set propuesto_por = null where planeta_a = 'mars'");
+  await d.exec(esquema);
+  assert.equal((await quien()).find((x) => x.planeta_a === "mars").q, null);
+  assert.equal(await Q("ping"), "ok");
+  assert.equal((await Q("sesion", { p_clave: clave(201) })).miembro.nombre, "Uno");
+  await falla(Q("justificar", { p_clave: clave(202), p_vinculo: mars.vinculo_id, p_justificacion: "x" }), "sin_permiso");
 });
 
 await prueba("avisos en vivo: cada cambio avisa solo al canal de su grupo", async () => {

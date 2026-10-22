@@ -24,7 +24,7 @@ const DATOS = arg("datos", "");
 
 // Las únicas funciones que Supabase deja llamar con la clave pública (las mismas que en el `grant` del esquema).
 const PUBLICAS = new Set(["ping", "unirse", "sesion", "grilla", "combinacion", "miembros", "actividad", "proponer",
-  "agregar_combinacion", "votar", "quitar_voto", "editar_texto", "pedir_retiro", "retiros", "descartar_pedido",
+  "agregar_combinacion", "votar", "quitar_voto", "validar_ya", "quitar_validacion", "editar_texto", "pedir_retiro", "retiros", "descartar_pedido",
   "borrar_texto", "quitar_combinacion", "ajustar_umbral", "expulsar", "exportar"]);
 
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",

@@ -1,7 +1,8 @@
 // Proponer un texto nuevo (o editar uno que ya está cargado).
 // Lleva título, autor y un máximo de palabras; se elige para qué combinaciones (un planeta o una pareja, hasta 12).
+// Quien administra puede además cargarlo ya validado, sin votación (casilla opcional).
 // Mientras escribís se guarda un borrador en este dispositivo, por si se cierra la pestaña a la mitad.
-import { R, E, yo, grupo } from "./estado.js";
+import { R, E, yo, grupo, esAdmin } from "./estado.js";
 import { ErrorApi, mensaje } from "./api.js";
 import { etiqueta, enRuta, deRuta } from "./planetas.js";
 import { selectorPlanetas } from "./selector.js";
@@ -11,6 +12,13 @@ const claveBorrador = () => "conjugarnos:borrador:" + yo().id;
 const leerBorrador = () => { try { return JSON.parse(localStorage.getItem(claveBorrador()) || "null"); } catch { return null; } };
 const guardarBorrador = (b) => { try { localStorage.setItem(claveBorrador(), JSON.stringify(b)); } catch { /* sin borrador */ } };
 const borrarBorrador = () => { try { localStorage.removeItem(claveBorrador()); } catch { /* nada */ } };
+
+/** Qué se avisa al editar el cuerpo de un texto: se reinician los votos y, según quién edite, la validación del admin. */
+function avisoReinicio() {
+  const base = "Con este cambio los votos de este texto se reinician: es más que una corrección de erratas.";
+  if (!E.editando || !E.editando.forzado) return base;
+  return esAdmin() ? base + " Como administrás el grupo, sigue validado." : base + " Además se pierde la validación del admin: el texto cambió.";
+}
 
 /**
  * @param {HTMLElement} el
@@ -32,13 +40,15 @@ export function montar(el, { combo = [], edicion = null } = {}) {
       <label class="campo"><span>Autor o autora</span><input name="autor" maxlength="120" required value="${esc(v.autor)}" autocomplete="off"></label>
       <label class="campo"><span>El texto</span><textarea name="cuerpo" rows="14" required spellcheck="true">${esc(v.cuerpo)}</textarea>
         <small id="pCuenta" aria-live="polite"></small></label>
-      ${editando ? `<p class="nota" id="pReinicia" role="note" hidden>Con este cambio los votos de este texto se reinician: es más que una corrección de erratas.</p>` : `
+      ${editando ? `<p class="nota" id="pReinicia" role="note" hidden>${esc(avisoReinicio())}</p>` : `
       <fieldset class="combos"><legend>¿Para qué combinaciones?</legend>
         <p class="ayuda">Un planeta solo o una pareja. Podés elegir hasta 12.</p>
         <ul id="pCombos" class="chips" aria-live="polite"></ul>
         <div id="pSel"></div>
         <p><button type="button" class="boton sec" id="pAgregar" disabled>Agregar esta combinación</button></p>
-      </fieldset>`}
+      </fieldset>
+      ${esAdmin() ? `<label class="check"><input type="checkbox" name="validar"><span><b>Cargarlo ya validado</b>
+        <small>Como admin, queda validado desde el principio en todas las combinaciones que elijas, sin votación. Los demás igual pueden votar. Si no la marcás, se propone como cualquier otro.</small></span></label>` : ""}`}
       <p class="ayuda">Subí lo que puedas compartir con tu grupo. Si es una obra con derechos de autor, mejor un fragmento que el texto entero.</p>
       <div id="pAviso" class="nota mal" role="alert" hidden></div>
       <div class="acciones"><button class="boton" type="submit" id="pEnviar">${editando ? "Guardar cambios" : "Proponer"}</button>
@@ -111,6 +121,8 @@ export function montar(el, { combo = [], edicion = null } = {}) {
       if (pendiente.length) { combos.push(pendiente); sel.limpiar(); pintarCombos(); }
       else return mostrar("Elegí al menos una combinación de planetas.");
     }
+    const validar = !editando && esAdmin() && !!f.elements.validar && f.elements.validar.checked;
+    const extra = validar ? { p_validar: true } : {};
     const boton = $("#pEnviar", el);
     boton.disabled = true;
     try {
@@ -120,9 +132,10 @@ export function montar(el, { combo = [], edicion = null } = {}) {
         const vuelta = E.editando && E.editando.volver; E.editando = null;
         location.hash = vuelta || "#grilla";
       } else {
-        const r = await R("proponer", { p_titulo: c.titulo, p_autor: c.autor, p_cuerpo: c.cuerpo, p_combinaciones: combos });
+        const r = await R("proponer", { p_titulo: c.titulo, p_autor: c.autor, p_cuerpo: c.cuerpo, p_combinaciones: combos, ...extra });
         borrarBorrador();
-        aviso(`Quedó propuesto para ${combos.length === 1 ? etiqueta(combos[0]) : combos.length + " combinaciones"}. Tu voto a favor ya cuenta.`);
+        const dest = combos.length === 1 ? etiqueta(combos[0]) : combos.length + " combinaciones";
+        aviso(validar ? `Quedó cargado y validado para ${dest}.` : `Quedó propuesto para ${dest}. Tu voto a favor ya cuenta.`);
         location.hash = "#c/" + enRuta(combos[0]);
         return r;
       }
@@ -133,7 +146,7 @@ export function montar(el, { combo = [], edicion = null } = {}) {
         $("#pYa", el).addEventListener("click", async () => {
           let ok = 0;
           for (const k of combos) {
-            try { await R("agregar_combinacion", { p_texto: x.detalle, p_a: k[0], p_b: k[1] || null }); ok++; }
+            try { await R("agregar_combinacion", { p_texto: x.detalle, p_a: k[0], p_b: k[1] || null, ...extra }); ok++; }
             catch (y) { if (!(y instanceof ErrorApi && y.codigo === "ya_propuesto")) { mostrar(mensaje(y)); return; } }
           }
           borrarBorrador();

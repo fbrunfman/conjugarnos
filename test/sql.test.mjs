@@ -40,7 +40,7 @@ await prueba("las tablas están cerradas para anon y authenticated", async () =>
 });
 await prueba("anon no puede crear grupos ni llamar a las ayudas internas", async () => {
   await db.exec("set role anon");
-  for (const q of [`select crear_grupo('x')`, `select _recalcular(gen_random_uuid())`, `select _yo('${clave(1)}')`]) {
+  for (const q of [`select crear_grupo('x')`, `select _recalcular(gen_random_uuid())`, `select _forzar(gen_random_uuid(), gen_random_uuid())`, `select _yo('${clave(1)}')`]) {
     let msg = ""; try { await db.query(q); } catch (e) { msg = e.message; }
     assert.match(msg, /permission denied/, q);
   }
@@ -317,6 +317,122 @@ await prueba("actividad: lo último, sin el voto automático de quien propone", 
   assert.equal(ult[0].tipo, "voto"); assert.equal(ult[0].quien, "Beto"); assert.equal(ult[0].titulo, "Reciente");
   assert.equal(ult[1].tipo, "texto"); assert.equal(ult[1].quien, "Cami");
   assert.equal(act.filter((e) => e.tipo === "voto" && e.titulo === "Reciente" && e.quien === "Cami").length, 0);
+});
+
+// ---- el admin decide solo: cargar ya validado y «validar ahora» ----
+const fila = async (cl, a, b, titulo) => (await R("combinacion", { p_clave: cl, p_a: a, p_b: b || null })).find((f) => f.texto.titulo === titulo);
+
+await prueba("admin: cargar un texto ya validado, sin votación (los demás no pueden)", async () => {
+  await falla(R("proponer", { p_clave: A, ...propuesta({ p_titulo: "Directo de Ana", p_combinaciones: [["venus", "neptune"]], p_validar: true }) }), "solo_admin");
+  assert.equal(await fila(A, "venus", "neptune", "Directo de Ana"), undefined);                  // no quedó nada a medias
+  const t = await R("proponer", { p_clave: ADM, ...propuesta({ p_titulo: "Directo", p_autor: "Z", p_combinaciones: [["venus", "neptune"], ["jupiter"]], p_validar: true }) });
+  assert.equal(t.vinculos.length, 2);
+  for (const [a, b] of [["venus", "neptune"], ["jupiter", null]]) {
+    const f = await fila(A, a, b, "Directo");
+    assert.equal(f.estado, "validado"); assert.equal(f.forzado, true); assert.equal(f.forzado_por, "Federico");
+    assert.deepEqual(f.favor.map((x) => x.nombre), ["Federico"]);
+  }
+  // proponer «normal» sigue igual: en debate y sin marca
+  await R("proponer", { p_clave: ADM, ...propuesta({ p_titulo: "Normal del admin", p_autor: "Z", p_combinaciones: [["venus", "neptune"]] }) });
+  const n = await fila(A, "venus", "neptune", "Normal del admin");
+  assert.equal(n.estado, "debate"); assert.equal(n.forzado, false);
+  // los votos de los demás se registran pero no lo mueven
+  const v = (await fila(A, "venus", "neptune", "Directo")).vinculo_id;
+  for (const cl of [A, B, C]) await R("votar", { p_clave: cl, p_vinculo: v, p_valor: "contra", p_motivo: "no me gusta" });
+  const f = await fila(A, "venus", "neptune", "Directo");
+  assert.equal(f.estado, "validado"); assert.equal(f.contra.length, 3);
+  // cuenta como validado en la grilla
+  const g = (await R("grilla", { p_clave: A })).find((x) => x.a === "venus" && x.b === "neptune");
+  assert.equal(g.validados, 1); assert.equal(g.debate, 1);
+});
+
+await prueba("admin: «validar ahora» el texto de otro; su voto pasa a favor; los votos ya no lo mueven", async () => {
+  const t = await R("proponer", { p_clave: B, ...propuesta({ p_titulo: "De Beto", p_autor: "Y", p_combinaciones: [["mercury", "jupiter"]] }) });
+  const v = t.vinculos[0];
+  await R("votar", { p_clave: C, p_vinculo: v, p_valor: "contra", p_motivo: "flojo" });
+  await R("votar", { p_clave: ADM, p_vinculo: v, p_valor: "contra", p_motivo: "lo pienso" });     // el admin había votado en contra
+  await falla(R("validar_ya", { p_clave: A, p_vinculo: v }), "solo_admin");
+  await falla(R("validar_ya", { p_clave: X, p_vinculo: v }), "vinculo_inexistente");   // el admin de otro grupo no puede
+  assert.equal((await fila(A, "mercury", "jupiter", "De Beto")).estado, "debate");
+  const r = await R("validar_ya", { p_clave: ADM, p_vinculo: v });
+  assert.equal(r.estado, "validado");
+  let f = await fila(ADM, "mercury", "jupiter", "De Beto");
+  assert.equal(f.estado, "validado"); assert.equal(f.forzado, true); assert.equal(f.forzado_por, "Federico");
+  assert.equal(f.mi_voto, "favor"); assert.equal(f.mi_motivo, null);                               // su voto en contra pasó a favor
+  assert.deepEqual(f.favor.map((x) => x.nombre).sort(), ["Beto", "Federico"]); assert.deepEqual(f.contra.map((x) => x.nombre), ["Cami"]);
+  // más votos en contra: sigue validado
+  for (const cl of [A, E, F]) await R("votar", { p_clave: cl, p_vinculo: v, p_valor: "contra", p_motivo: "no" });
+  assert.equal((await fila(A, "mercury", "jupiter", "De Beto")).estado, "validado");
+  // quedó en la actividad
+  const act = await R("actividad", { p_clave: A, p_n: 100 });
+  assert.ok(act.some((e) => e.tipo === "validacion" && e.quien === "Federico" && e.titulo === "De Beto" && e.a === "mercury" && e.b === "jupiter"));
+  // y en la copia de seguridad
+  const ex = await R("exportar", { p_clave: ADM });
+  assert.equal(ex.textos.find((t2) => t2.titulo === "De Beto").combinaciones[0].validado_por_admin, true);
+  // devolver a debate: solo el admin; con 2 a favor y 4 en contra no alcanza por votos
+  await falla(R("quitar_validacion", { p_clave: A, p_vinculo: v }), "solo_admin");
+  const q = await R("quitar_validacion", { p_clave: ADM, p_vinculo: v });
+  assert.equal(q.estado, "debate");
+  f = await fila(A, "mercury", "jupiter", "De Beto");
+  assert.equal(f.forzado, false); assert.equal(f.forzado_por, null);
+  assert.equal(f.favor.length, 2);                                                                 // los votos quedaron como estaban
+  assert.equal((await R("quitar_validacion", { p_clave: ADM, p_vinculo: v })).estado, "debate");  // repetirlo no rompe nada
+});
+
+await prueba("admin: al devolver a debate, si los votos solos alcanzan, queda validado igual", async () => {
+  const t = await R("proponer", { p_clave: B, ...propuesta({ p_titulo: "Con votos", p_autor: "W", p_combinaciones: [["sun", "venus"]] }) });
+  const v = t.vinculos[0];
+  await R("votar", { p_clave: A, p_vinculo: v, p_valor: "favor" });
+  await R("validar_ya", { p_clave: ADM, p_vinculo: v });                                            // 3 a favor (Beto, Ana, Federico): sin el admin no llega a 4
+  await R("votar", { p_clave: C, p_vinculo: v, p_valor: "favor" });
+  await R("votar", { p_clave: E, p_vinculo: v, p_valor: "favor" });
+  assert.equal((await R("quitar_validacion", { p_clave: ADM, p_vinculo: v })).estado, "validado");
+  assert.equal((await fila(A, "sun", "venus", "Con votos")).forzado, false);
+});
+
+await prueba("admin: agregar un texto a otra combinación ya validado", async () => {
+  const t = (await fila(A, "sun", "venus", "Con votos")).texto.id;
+  await falla(R("agregar_combinacion", { p_clave: A, p_texto: t, p_a: "mars", p_b: "venus", p_validar: true }), "solo_admin");
+  await R("agregar_combinacion", { p_clave: ADM, p_texto: t, p_a: "mars", p_b: "venus", p_validar: true });
+  const f = await fila(A, "mars", "venus", "Con votos");
+  assert.equal(f.estado, "validado"); assert.equal(f.forzado, true);
+  await R("agregar_combinacion", { p_clave: ADM, p_texto: t, p_a: "mars", p_b: "saturn" });          // sin la opción: normal
+  assert.equal((await fila(A, "mars", "saturn", "Con votos")).forzado, false);
+});
+
+await prueba("admin: editar un texto validado por el admin: lo pierde si edita otra persona, lo conserva si edita el admin", async () => {
+  const cuerpoViejo = palabras(60), cuerpoNuevo = palabras(60, "otra");
+  const t = await R("proponer", { p_clave: B, ...propuesta({ p_titulo: "Edición", p_autor: "V", p_cuerpo: cuerpoViejo, p_combinaciones: [["moon", "saturn"], ["moon", "uranus"]] }) });
+  for (const v of t.vinculos) await R("validar_ya", { p_clave: ADM, p_vinculo: v });
+  const ed = (cl, cuerpo) => R("editar_texto", { p_clave: cl, p_texto: t.texto_id, p_titulo: "Edición", p_autor: "V", p_cuerpo: cuerpo });
+  // una errata no toca nada
+  assert.equal((await ed(B, cuerpoViejo.replace("palabra7 ", "palabrra7 "))).reiniciado, false);
+  assert.equal((await fila(A, "moon", "saturn", "Edición")).forzado, true);
+  // la persona que lo cargó cambia el texto: se reinician los votos y se pierde la validación del admin
+  assert.equal((await ed(B, cuerpoNuevo)).reiniciado, true);
+  let f = await fila(A, "moon", "saturn", "Edición");
+  assert.equal(f.forzado, false); assert.equal(f.estado, "debate"); assert.deepEqual(f.favor.map((x) => x.nombre), ["Beto"]);
+  // el admin lo vuelve a validar y es él quien lo cambia: se reinician los votos pero la validación sigue
+  await R("validar_ya", { p_clave: ADM, p_vinculo: f.vinculo_id });
+  assert.equal((await ed(ADM, cuerpoViejo)).reiniciado, true);
+  f = await fila(A, "moon", "saturn", "Edición");
+  assert.equal(f.forzado, true); assert.equal(f.estado, "validado"); assert.deepEqual(f.favor.map((x) => x.nombre), ["Beto"]);
+  // la otra combinación (que el admin dejó validada antes) quedó en debate por el primer cambio de Beto
+  assert.equal((await fila(A, "moon", "uranus", "Edición")).forzado, false);
+});
+
+await prueba("admin: ni los votos en contra, ni bajar el umbral, ni expulsar mueven un validado por el admin", async () => {
+  const t = await R("proponer", { p_clave: ADM, ...propuesta({ p_titulo: "Firme", p_autor: "U", p_combinaciones: [["mars", "uranus"]], p_validar: true }) });
+  const v = t.vinculos[0];
+  for (const cl of [A, B, C, E, F]) await R("votar", { p_clave: cl, p_vinculo: v, p_valor: "contra", p_motivo: "no" });   // 5 en contra, 1 a favor: sin la marca volvería a debate
+  assert.equal((await fila(A, "mars", "uranus", "Firme")).estado, "validado");
+  await R("ajustar_umbral", { p_clave: ADM, p_votos: 8, p_num: 3, p_den: 4 });
+  assert.equal((await fila(A, "mars", "uranus", "Firme")).estado, "validado");
+  await R("ajustar_umbral", { p_clave: ADM, p_votos: 4, p_num: 2, p_den: 3 });
+  const eli = (await R("miembros", { p_clave: ADM })).find((m) => m.nombre === "Eli").id;
+  await R("expulsar", { p_clave: ADM, p_miembro: eli });
+  const f = await fila(A, "mars", "uranus", "Firme");
+  assert.equal(f.estado, "validado"); assert.equal(f.contra.length, 4);
 });
 
 await prueba("exportar: solo el admin, con nombres y votos, sin claves", async () => {

@@ -169,6 +169,11 @@ fieldset.combos legend { padding: 0 6px; font-weight: 600; }
 .voto.contra[aria-pressed="true"] { background: rgba(184, 58, 43, .13); border-color: var(--hard); box-shadow: inset 0 0 0 1px var(--hard); }
 .v-motivo { margin-top: 10px; display: grid; gap: 8px; max-width: 460px; }
 .v-motivo-b { display: flex; gap: 8px; flex-wrap: wrap; }
+.v-admin { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0 0; }
+.v-admin .boton { min-height: 38px; padding: 0 16px; }
+label.check { display: flex; gap: 10px; align-items: flex-start; max-width: 62ch; cursor: pointer; }
+label.check input { flex: none; width: 20px; height: 20px; margin: 2px 0 0; accent-color: var(--ink); }
+label.check small { display: block; margin-top: 2px; color: var(--ink-2); font-size: 13px; }
 .v-quienes, .v-contra { margin: 10px 0 0; font-size: 14px; color: var(--ink-2); }
 .v-contra { padding: 0; list-style: none; display: grid; gap: 4px; }
 .v-contra b, .v-quienes b { color: var(--ink); }

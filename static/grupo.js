@@ -36,13 +36,14 @@ export async function actualizar() {
 const frase = (a) => {
   const c = a.b ? [a.a, a.b] : [a.a];
   if (a.tipo === "texto") return `<b>${esc(a.quien || "Alguien que ya no está")}</b> propuso «${esc(a.titulo)}»`;
+  if (a.tipo === "validacion") return `<b>${esc(a.quien || "El admin")}</b> validó «${esc(a.titulo)}» para <a href="#c/${enRuta(c)}">${esc(etiqueta(c))}</a> por su cuenta`;
   return `<b>${esc(a.quien)}</b> votó ${a.valor === "favor" ? "a favor" : "en contra"} de «${esc(a.titulo)}» para <a href="#c/${enRuta(c)}">${esc(etiqueta(c))}</a>${a.estado === "validado" ? " · validado" : ""}`;
 };
 
 function pintar(miembros, actividad, retiros) {
   const g = grupo(), inv = invitacionLink();
   const admin = esAdmin();
-  const umbral = `Un texto se valida con <b>${g.umbral_votos}</b> votos a favor y al menos <b>${fraccion(g.umbral_num, g.umbral_den)}</b> de los votos a favor. Vuelve a «en debate» si baja de la mitad.`;
+  const umbral = `Un texto se valida con <b>${g.umbral_votos}</b> votos a favor y al menos <b>${fraccion(g.umbral_num, g.umbral_den)}</b> de los votos a favor. Vuelve a «en debate» si baja de la mitad. Quien administra también puede validar un texto por su cuenta: queda marcado como «validado por el admin» y los votos ya no lo mueven hasta que lo devuelva a debate.`;
   $("#gpBody").innerHTML = `
     ${admin && inv ? `<section class="caja" aria-labelledby="tInv"><h3 id="tInv">Invitar a alguien</h3>
       <p>Mandale este link. Al abrirlo elige su nombre y entra.</p>

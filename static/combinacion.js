@@ -57,6 +57,7 @@ function restaurar({ y, borradores }) {
 // ---- dibujo ----
 function resumenEstado(f) {
   const nf = f.favor.length, nc = f.contra.length;
+  if (f.forzado) return `Validado por ${f.forzado_por ? f.forzado_por + " (admin)" : "el admin"} · ${nf} a favor${nc ? ` y ${nc} en contra` : ""}`;
   if (f.estado === "validado") return nc ? `Validado · ${nf} a favor y ${nc} en contra` : `Validado · ${nf} a favor`;
   const k = faltan(nf, nc, grupo());
   return `${nf} a favor y ${nc} en contra · faltan ${plural(k, "voto", "votos")} a favor para validar`;
@@ -82,6 +83,9 @@ function tarjeta(f) {
         <button type="button" class="voto contra" data-voto="contra" aria-pressed="${mio === "contra"}" aria-expanded="false">En contra</button>
         ${mio ? `<button type="button" class="enlace" data-quitar>Quitar mi voto</button>` : ""}
       </div>
+      ${esAdmin() ? `<p class="v-admin"><span class="menor">Admin:</span>
+        ${f.forzado ? `<button type="button" class="enlace" data-devolver>Devolver a debate</button>`
+          : f.estado !== "validado" ? `<button type="button" class="boton sec" data-validar>Validar ahora</button> <span class="menor">Tu voto alcanza: queda validado sin esperar a los demás.</span>` : ""}</p>` : ""}
       <form class="v-motivo" hidden><label class="campo"><span>Motivo, en una línea</span>
         <input maxlength="200" autocomplete="off" value="${esc(mio === "contra" ? f.mi_motivo || "" : "")}"></label>
         <div class="v-motivo-b"><button type="submit" class="boton">Votar en contra</button><button type="button" class="boton sec" data-cancelar>Cancelar</button></div>
@@ -131,7 +135,7 @@ function pintar() {
   // lo que cambió desde la última vez, marcado un momento
   const nuevas = new Map();
   for (const f of filas) {
-    const firma = `${f.estado}|${f.favor.length}|${f.contra.length}`;
+    const firma = `${f.estado}|${f.forzado ? "a" : ""}|${f.favor.length}|${f.contra.length}`;
     nuevas.set(f.vinculo_id, firma);
     if (!primera && firmas.get(f.vinculo_id) !== firma) marcar(f.vinculo_id);
   }
@@ -160,6 +164,8 @@ function conectar() {
     if (voto) return voto.dataset.voto === "favor" ? votar(v, "favor") : motivo(tx, f);
     if (e.target.closest("[data-cancelar]")) return cerrarMotivo(tx);
     if (e.target.closest("[data-quitar]")) return quitarVoto(v);
+    if (e.target.closest("[data-validar]")) return validarYa(f);
+    if (e.target.closest("[data-devolver]")) return devolver(f);
     const acc = e.target.closest("[data-acc]");
     if (acc) { tx.querySelector(".menu").open = false; return accion(acc.dataset.acc, f); }
   };
@@ -209,6 +215,22 @@ async function quitarVoto(v) {
   await actualizar();
 }
 
+// Quien administra: validar sin esperar los votos, o devolver a debate lo que validó así.
+async function validarYa(f) {
+  const t = f.texto;
+  if (!(await confirmar({ titulo: "Validar ahora", texto: `«${t.titulo}» queda validado para ${etiqueta(ids)} sin esperar los votos, y tu voto cuenta a favor. Los demás pueden seguir votando, pero ya no lo mueven. Cuando quieras lo devolvés a debate.`, ok: "Validar" }))) return;
+  try { await R("validar_ya", { p_vinculo: f.vinculo_id }); aviso("Quedó validado por vos. Ya entra en el azar de esta combinación."); }
+  catch (e) { aviso(mensaje(e), "mal"); }
+  await actualizar();
+}
+async function devolver(f) {
+  try {
+    const r = await R("quitar_validacion", { p_vinculo: f.vinculo_id });
+    aviso(r.estado === "validado" ? "Sigue validado: los votos solos alcanzan." : "Volvió a «en debate»: ahora se juzga solo por los votos.");
+  } catch (e) { aviso(mensaje(e), "mal"); }
+  await actualizar();
+}
+
 function azar() {
   const val = filas.filter((f) => f.estado === "validado");
   if (!val.length) return;
@@ -231,7 +253,7 @@ function azar() {
 async function accion(que, f) {
   const t = f.texto;
   try {
-    if (que === "editar") { E.editando = { texto: t, volver: location.hash }; location.hash = "#editar"; return; }
+    if (que === "editar") { E.editando = { texto: t, volver: location.hash, forzado: !!f.forzado }; location.hash = "#editar"; return; }
     if (que === "agregar") return agregar(t);
     if (que === "retiro") {
       const m = await pedirTexto({ titulo: "Pedir que se retire este texto", ayuda: "Lo ven todos y lo decide quien administra el grupo.", etiqueta: "Motivo", ok: "Pedir retiro", max: 300 });

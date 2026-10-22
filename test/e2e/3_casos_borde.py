@@ -74,7 +74,7 @@ with sync_playwright() as p:
     # texto repetido → proponer el existente a estas combinaciones
     fede.goto(URL+'/#proponer/mars-jupiter'); fede.wait_for_selector('#fProp')
     fede.fill('input[name=titulo]','muchas'); fede.fill('input[name=autor]','z'); fede.fill('textarea[name=cuerpo]','uno dos'); fede.click('#pEnviar')
-    fede.wait_for_selector('#pYa'); chk('Ya hay un texto' in fede.inner_text('#pAviso'),'texto repetido: avisa')
+    fede.wait_for_selector('#pYa'); chk('Ya hay algo con ese título' in fede.inner_text('#pAviso'),'texto repetido: avisa')
     fede.click('#pYa'); fede.wait_for_selector('.tx'); chk(True,'…y ofrece proponer el que ya existe para esas combinaciones')
     # rutas raras
     for ruta in ('#c/pluto-saturn','#c/foo','#c/sun-sun','#c/sun-moon-mars','#xyz','#editar'):

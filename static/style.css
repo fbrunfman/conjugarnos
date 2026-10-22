@@ -101,6 +101,19 @@ input, select, textarea { width: 100%; min-height: 44px; padding: 9px 12px; bord
 textarea { font: 400 16px/1.55 var(--serif); resize: vertical; }
 input[type="number"] { max-width: 8em; }
 input[readonly] { background: var(--surface); }
+fieldset.clases { margin: 0; padding: 0; border: 0; min-width: 0; }
+fieldset.clases legend { padding: 0; margin-bottom: 6px; font-weight: 600; font-size: 14px; }
+.seg { display: flex; flex-wrap: wrap; gap: 8px; }
+.seg-op { position: relative; display: inline-flex; }
+.seg-op input { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; margin: 0; opacity: 0; cursor: pointer; }
+.seg-op span { display: inline-flex; align-items: center; min-height: 42px; padding: 0 16px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--field); font-weight: 600; }
+.seg-op:hover span { background: var(--hover); }
+.seg-op input:checked + span { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+.seg-op input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 2px; }
+.clase-et { display: inline-block; padding: 1px 8px; border: 1px solid var(--line-strong); border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: .02em; color: var(--ink-2); }
+.tx-enlace { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 12px 0 0; }
+.tx-enlace .boton { min-height: 40px; padding: 0 18px; }
+.tx-enlace .flecha { margin-left: 6px; }
 fieldset.combos { margin: 0; padding: 14px; border: 1px solid var(--line); border-radius: 10px; }
 fieldset.combos legend { padding: 0 6px; font-weight: 600; }
 

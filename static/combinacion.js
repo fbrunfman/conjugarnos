@@ -1,11 +1,12 @@
 // Una combinación: todos sus textos, completos: primero los validados y después los que están en debate, con los votos de cada uno.
 // Se actualiza sola cuando alguien del grupo vota o propone; al volver a dibujar se conserva lo que estabas haciendo
-// (qué textos habías cerrado, qué comentarios tenías desplegados, un motivo o un comentario a medio escribir, dónde estabas parado en la página).
+// (qué textos habías cerrado, qué comentarios tenías desplegados, el menú «Más» abierto, un motivo o un comentario a medio escribir, dónde estabas parado en la página).
 import { R, E, yo, grupo, esAdmin } from "./estado.js";
 import { mensaje } from "./api.js";
 import { PLANETAS, NOMBRE, circuloDeco, etiqueta, enRuta, llave } from "./planetas.js";
 import { selectorPlanetas } from "./selector.js";
 import { esc, $, $$, aviso, plural, hace, confirmar, pedirTexto, dialogo, cuerpoHTML, faltan, reducido } from "./ui.js";
+import { claseDe, enlaceSeguro } from "./clases.js";
 
 let raiz = null, ids = [], filas = [], grilla = [], ficha = 0;
 const cerrados = new Set();          // vínculos cuyo texto largo cerraste vos (por defecto se ve todo completo)
@@ -43,9 +44,11 @@ function capturar() {
   $$(".v-motivo:not([hidden])").forEach((f) => { borradores[f.closest(".tx").dataset.v] = { valor: f.querySelector("input").value, foco: document.activeElement === f.querySelector("input") }; });
   const comentarios = {};
   $$(".com-form textarea").forEach((t) => { if (t.value || document.activeElement === t) comentarios[t.closest(".tx").dataset.v] = { valor: t.value, foco: document.activeElement === t }; });
-  return { y: scrollY, borradores, comentarios };
+  const menus = $$(".tx .menu[open]").map((m) => m.closest(".tx").dataset.v);   // los «Más» que tenías abiertos
+  return { y: scrollY, borradores, comentarios, menus };
 }
-function restaurar({ y, borradores, comentarios }) {
+function restaurar({ y, borradores, comentarios, menus }) {
+  for (const v of menus) { const m = $(`.tx[data-v="${CSS.escape(v)}"] .menu`); if (m) m.open = true; }
   for (const [v, b] of Object.entries(borradores)) {
     const tx = $(`.tx[data-v="${CSS.escape(v)}"]`);
     if (!tx) continue;
@@ -80,18 +83,19 @@ function panelComentarios(f) {
   return `<div class="coment">
     ${lista.length ? `<ul class="com-lista">${lista.map((c) => `<li data-c="${c.id}">
       <p class="com-meta"><b>${esc(c.quien || "Alguien que ya no está")}</b> · ${esc(hace(c.creado))}${esAdmin() || c.quien_id === yo().id ? ` · <button type="button" class="enlace peligro" data-borrar-com="${c.id}">Borrar</button>` : ""}</p>
-      <p class="com-cuerpo">${esc(c.cuerpo)}</p></li>`).join("")}</ul>` : `<p class="menor com-vacio">Todavía no hay comentarios en este texto.</p>`}
+      <p class="com-cuerpo">${esc(c.cuerpo)}</p></li>`).join("")}</ul>` : `<p class="menor com-vacio">Todavía no hay comentarios.</p>`}
     <form class="com-form"><label class="campo"><span class="vh">Tu comentario</span>
       <textarea rows="2" maxlength="1000" placeholder="Escribí un comentario…"></textarea></label>
       <div class="com-b"><button type="submit" class="boton">Comentar</button>
-        <span class="menor">Es del texto: se ve en todas las combinaciones donde está.</span></div>
+        <span class="menor">Es de todo el aporte: se ve en todas las combinaciones donde está.</span></div>
       <p class="error" role="alert" hidden></p></form>
   </div>`;
 }
 
 function tarjeta(f) {
   const t = f.texto, mio = f.mi_voto, id = f.vinculo_id;
-  const largo = t.palabras > 90, abierto = !cerrados.has(id) || !largo;
+  const cl = claseDe(t), hayCuerpo = !!(t.cuerpo && t.cuerpo.trim()), enlace = enlaceSeguro(t.enlace);
+  const largo = hayCuerpo && t.palabras > 90, abierto = !cerrados.has(id) || !largo;
   const otrosVotos = [...f.favor, ...f.contra].some((v) => v.nombre !== yo().nombre);
   const nCom = (t.comentarios || []).length;
   const puedeEditar = esAdmin() || t.cargado_por_id === yo().id;
@@ -99,14 +103,15 @@ function tarjeta(f) {
   const puedeQuitar = esAdmin() || (t.cargado_por_id === yo().id && !otrosVotos);
   return `<article class="tx ${f.estado}" data-v="${id}" data-t="${t.id}" aria-labelledby="tt-${id}">
     <header class="tx-cab"><h4 class="tx-tit" id="tt-${id}">${esc(t.titulo)}</h4><span class="pill ${f.estado}">${f.estado === "validado" ? "Validado" : "En debate"}</span></header>
-    <p class="tx-meta"><span class="mp-au">${esc(t.autor)}</span></p>
-    <p class="tx-meta menor">${plural(t.palabras, "palabra", "palabras")} · cargado por ${esc(t.cargado_por || "alguien que ya no está")}${t.editado ? " · editado" : ""}</p>
-    ${t.retiro_pedido ? `<p class="nota" role="note">Se pidió retirar este texto${t.retiro_motivo ? `: ${esc(t.retiro_motivo)}` : ""}. Lo decide quien administra el grupo.</p>` : ""}
+    <p class="tx-meta">${t.clase && t.clase !== "texto" ? `<span class="clase-et">${esc(cl.nombre)}</span> ${cl.de ? esc(cl.de) + " " : ""}` : ""}<span class="mp-au">${esc(t.autor)}</span></p>
+    <p class="tx-meta menor">${hayCuerpo ? `${plural(t.palabras, "palabra", "palabras")} · ` : ""}cargado por ${esc(t.cargado_por || "alguien que ya no está")}${t.editado ? " · editado" : ""}</p>
+    ${t.retiro_pedido ? `<p class="nota" role="note">Se pidió retirar este aporte${t.retiro_motivo ? `: ${esc(t.retiro_motivo)}` : ""}. Lo decide quien administra el grupo.</p>` : ""}
     ${f.justificacion ? `<div class="tx-just"><p class="tx-just-t">Justificación de ${esc(f.propuesto_por || "quien lo propuso")}</p><p class="tx-just-c">${esc(f.justificacion)}</p></div>` : ""}
-    <div class="tx-cuerpo cmb-text${abierto ? " abierto" : ""}" id="cu-${id}">${cuerpoHTML(t.cuerpo)}</div>
+    ${enlace ? `<p class="tx-enlace"><a class="boton sec" href="${esc(enlace.href)}" target="_blank" rel="noopener noreferrer">${esc(cl.enlaceVerbo || "Abrir")} <span class="flecha" aria-hidden="true">↗</span><span class="vh"> (se abre en otra pestaña)</span></a><span class="menor">${esc(enlace.dominio)}</span></p>` : ""}
+    ${hayCuerpo ? `<div class="tx-cuerpo cmb-text${abierto ? " abierto" : ""}" id="cu-${id}">${cuerpoHTML(t.cuerpo)}</div>` : ""}
     <div class="tx-pie">
       ${largo ? `<button type="button" class="enlace leer" data-leer aria-expanded="${abierto}" aria-controls="cu-${id}">${abierto ? "Mostrar menos" : `Leer completo (${t.palabras} palabras)`}</button>` : ""}
-      <button type="button" class="com-btn" data-coment aria-expanded="${charlando.has(id)}" aria-controls="co-${id}" aria-label="Comentarios${nCom ? ` (${nCom})` : ""}" title="${nCom ? plural(nCom, "comentario", "comentarios") : "Comentar este texto"}">${BURBUJA}${nCom ? `<span class="com-n">${nCom}</span>` : ""}</button>
+      <button type="button" class="com-btn" data-coment aria-expanded="${charlando.has(id)}" aria-controls="co-${id}" aria-label="Comentarios${nCom ? ` (${nCom})` : ""}" title="${nCom ? plural(nCom, "comentario", "comentarios") : "Comentar"}">${BURBUJA}${nCom ? `<span class="com-n">${nCom}</span>` : ""}</button>
     </div>
     <div class="com-hueco" id="co-${id}">${charlando.has(id) ? panelComentarios(f) : ""}</div>
     <div class="votos">
@@ -127,12 +132,12 @@ function tarjeta(f) {
       ${f.contra.length ? `<ul class="v-contra">${f.contra.map((v) => `<li><b>${esc(v.nombre)}</b> en contra: ${esc(v.motivo || "")}</li>`).join("")}</ul>` : ""}
     </div>
     <details class="menu"><summary>Más</summary><div class="menu-b">
-      ${puedeEditar ? `<button type="button" class="enlace" data-acc="editar">Editar el texto</button>` : ""}
+      ${puedeEditar ? `<button type="button" class="enlace" data-acc="editar">Editar</button>` : ""}
       ${puedeJustificar ? `<button type="button" class="enlace" data-acc="justificar">${f.justificacion ? "Cambiar la justificación" : "Agregar una justificación"}</button>` : ""}
       <button type="button" class="enlace" data-acc="agregar">Proponerlo para otra combinación</button>
       ${t.retiro_pedido ? (esAdmin() ? `<button type="button" class="enlace" data-acc="descartar">Dejarlo (descartar el pedido)</button>` : "") : `<button type="button" class="enlace" data-acc="retiro">Pedir que se retire</button>`}
       ${puedeQuitar ? `<button type="button" class="enlace" data-acc="quitar">Sacarlo de esta combinación</button>` : ""}
-      ${esAdmin() ? `<button type="button" class="enlace peligro" data-acc="borrar">Borrar el texto del grupo</button>` : ""}
+      ${esAdmin() ? `<button type="button" class="enlace peligro" data-acc="borrar">Borrar del grupo</button>` : ""}
     </div></details>
   </article>`;
 }
@@ -156,11 +161,11 @@ function pintar() {
   }
   const hayParejas = pidePrestado() && grilla.some((g) => g.b && (g.a === ids[0] || g.b === ids[0]));
   const vacio = filas.length ? ""
-    : hayParejas ? `<p class="vacio-msg">Todavía no hay textos solo para <strong>${esc(etiqueta(ids))}</strong>. Abajo están sus parejas; y si tenés uno que le quede bien a este planeta solo, proponelo.</p>`
-    : `<p class="vacio-msg">Todavía no hay ningún texto para <strong>${esc(etiqueta(ids))}</strong>. ¿Tenés uno que le quede bien? Proponelo: tu voto a favor ya cuenta, y los demás pueden sumarse.</p>`;
+    : hayParejas ? `<p class="vacio-msg">Todavía no hay nada solo para <strong>${esc(etiqueta(ids))}</strong>. Abajo están sus parejas; y si tenés algo que le quede bien a este planeta solo, proponelo.</p>`
+    : `<p class="vacio-msg">Todavía no hay nada para <strong>${esc(etiqueta(ids))}</strong>. ¿Tenés un texto, una biografía, una película o una canción que le quede bien? Proponelo: tu voto a favor ya cuenta, y los demás pueden sumarse.</p>`;
   $("#cBody").innerHTML = `
-    <p class="sub">${val.length ? plural(val.length, "texto validado", "textos validados") : "Sin textos validados"}${deb.length ? ` · ${deb.length} en debate` : ""}</p>
-    <p class="acciones"><a class="boton" href="#proponer/${enRuta(ids)}">Proponer un texto</a></p>
+    <p class="sub">${val.length ? plural(val.length, "aporte validado", "aportes validados") : "Sin aportes validados"}${deb.length ? ` · ${deb.length} en debate` : ""}</p>
+    <p class="acciones"><a class="boton" href="#proponer/${enRuta(ids)}">Proponer para esta combinación</a></p>
     ${vacio}
     ${val.length ? `<h3 class="seccion">Validados <span>${val.length}</span></h3><div class="lista">${val.map(tarjeta).join("")}</div>` : ""}
     ${deb.length ? `<h3 class="seccion">En debate <span>${deb.length}</span></h3><div class="lista">${deb.map(tarjeta).join("")}</div>` : ""}
@@ -311,7 +316,7 @@ async function accion(que, f) {
       aviso(j ? "Guardada la justificación." : "Se quitó la justificación.");
     }
     if (que === "retiro") {
-      const m = await pedirTexto({ titulo: "Pedir que se retire este texto", ayuda: "Lo ven todos y lo decide quien administra el grupo.", etiqueta: "Motivo", ok: "Pedir retiro", max: 300 });
+      const m = await pedirTexto({ titulo: "Pedir que se retire este aporte", ayuda: "Lo ven todos y lo decide quien administra el grupo.", etiqueta: "Motivo", ok: "Pedir retiro", max: 300 });
       if (m === null) return;
       await R("pedir_retiro", { p_texto: t.id, p_motivo: m || null }); aviso("Listo, se pidió el retiro.");
     }
@@ -321,8 +326,8 @@ async function accion(que, f) {
       await R("quitar_combinacion", { p_vinculo: f.vinculo_id }); aviso("Listo, se sacó de esta combinación.");
     }
     if (que === "borrar") {
-      if (!(await confirmar({ titulo: "Borrar el texto", texto: `«${t.titulo}» se borra de todas las combinaciones, con sus votos. No se puede deshacer.`, ok: "Borrar", peligro: true }))) return;
-      await R("borrar_texto", { p_texto: t.id }); aviso("Texto borrado.");
+      if (!(await confirmar({ titulo: "Borrar del grupo", texto: `«${t.titulo}» se borra de todas las combinaciones, con sus votos y comentarios. No se puede deshacer.`, ok: "Borrar", peligro: true }))) return;
+      await R("borrar_texto", { p_texto: t.id }); aviso("Borrado.");
     }
   } catch (e) { aviso(mensaje(e), "mal"); }
   await actualizar();
@@ -331,7 +336,7 @@ async function accion(que, f) {
 /** Pide la justificación de un texto en esta combinación. Devuelve el texto (vacío = sin justificación), o null si se cancela. */
 function pedirJustificacion(f) {
   return dialogo(`<form method="dialog" class="dlg-f"><h2>Justificación</h2>
-    <p>Por qué «${esc(f.texto.titulo)}» va con ${esc(etiqueta(ids))}. Se muestra junto al texto, firmada con el nombre de quien lo propuso. Si la dejás vacía, se saca.</p>
+    <p>Por qué «${esc(f.texto.titulo)}» va con ${esc(etiqueta(ids))}. Se muestra junto a lo que se propuso, firmada con el nombre de quien lo propuso. Si la dejás vacía, se saca.</p>
     <label class="campo"><span>Justificación (opcional)</span><textarea name="j" rows="5" maxlength="500" placeholder="Lo agrego porque…" autofocus>${esc(f.justificacion || "")}</textarea></label>
     <div class="dlg-b"><button type="button" class="boton sec" data-cerrar>Cancelar</button><button type="submit" class="boton">Guardar</button></div></form>`, {
     alMontar: (d, cerrar) => d.querySelector("form").addEventListener("submit", (e) => { e.preventDefault(); cerrar(d.querySelector("textarea").value.trim()); }),

@@ -36,7 +36,7 @@ function pintar(filas) {
       const v = f ? f.validados : 0, d = f ? f.debate : 0;
       const estado = v > 0 ? "val" : d > 0 ? "deb" : "vac";
       const ids = solo ? [fila] : [fila, col];
-      const dice = v || d ? `${plural(v, "validado", "validados")}, ${d} en debate` : "sin texto";
+      const dice = v || d ? `${plural(v, "validado", "validados")}, ${d} en debate` : "sin nada";
       const num = v > 0 ? v : d > 0 ? d : "";
       return `<td><button type="button" class="cel ${estado}${solo ? " solo" : ""}" data-c="${enRuta(ids)}"
         aria-label="${esc(etiqueta(ids))}: ${dice}" title="${esc(etiqueta(ids))}: ${dice}"><span>${num}</span>${v > 0 && d > 0 ? `<i class="pto" aria-hidden="true"></i>` : ""}</button></td>`;
@@ -45,16 +45,16 @@ function pintar(filas) {
   }).join("");
 
   document.getElementById("gResumen").textContent =
-    `${conValidado} de 55 combinaciones con un texto validado` + (soloDebate ? ` · ${soloDebate} con textos en debate` : "") + ".";
+    `${conValidado} de 55 combinaciones con un aporte validado` + (soloDebate ? ` · ${soloDebate} con aportes en debate` : "") + ".";
   document.getElementById("gCuerpo").innerHTML = `
-    <p class="acciones"><a class="boton" href="#proponer">Proponer un texto</a></p>
-    <div class="grilla-caja"><table class="grilla"><caption class="vh">Combinaciones de planetas. Tocá una casilla para ver sus textos.</caption>
+    <p class="acciones"><a class="boton" href="#proponer">Proponer</a></p>
+    <div class="grilla-caja"><table class="grilla"><caption class="vh">Combinaciones de planetas. Tocá una casilla para ver lo que tiene.</caption>
       <thead><tr><td></td>${cab}</tr></thead><tbody>${cuerpo}</tbody></table></div>
     <p class="menor ref">Referencias</p>
     <ul class="leyenda" aria-label="Qué significa cada casilla">
-      <li><span class="mini cel val"></span> tiene textos validados; el número de adentro es cuántos</li>
-      <li><span class="mini cel deb"></span> tiene solo textos en debate; el número de adentro es cuántos</li>
-      <li><span class="mini cel vac"></span> todavía sin texto</li>
+      <li><span class="mini cel val"></span> tiene aportes validados; el número de adentro es cuántos</li>
+      <li><span class="mini cel deb"></span> tiene solo aportes en debate; el número de adentro es cuántos</li>
+      <li><span class="mini cel vac"></span> todavía sin nada</li>
       <li><span class="mini cel solo vac"></span> en la diagonal, el planeta solo</li>
     </ul>`;
   document.getElementById("gCuerpo").onclick = (e) => {

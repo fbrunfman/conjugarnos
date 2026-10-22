@@ -35,7 +35,10 @@ export async function actualizar() {
 
 const frase = (a) => {
   const c = a.b ? [a.a, a.b] : [a.a];
-  if (a.tipo === "texto") return `<b>${esc(a.quien || "Alguien que ya no está")}</b> propuso «${esc(a.titulo)}»`;
+  if (a.tipo === "texto") {
+    const que = { biografia: `la biografía de «${esc(a.titulo)}»`, pelicula: `la película «${esc(a.titulo)}»`, cancion: `la canción «${esc(a.titulo)}»` }[a.clase] || `«${esc(a.titulo)}»`;
+    return `<b>${esc(a.quien || "Alguien que ya no está")}</b> propuso ${que}`;
+  }
   if (a.tipo === "comentario") return `<b>${esc(a.quien || "Alguien que ya no está")}</b> comentó «${esc(a.titulo)}»`;
   if (a.tipo === "validacion") return `<b>${esc(a.quien || "El admin")}</b> validó «${esc(a.titulo)}» para <a href="#c/${enRuta(c)}">${esc(etiqueta(c))}</a> por su cuenta`;
   return `<b>${esc(a.quien)}</b> votó ${a.valor === "favor" ? "a favor" : "en contra"} de «${esc(a.titulo)}» para <a href="#c/${enRuta(c)}">${esc(etiqueta(c))}</a>${a.estado === "validado" ? " · validado" : ""}`;
@@ -44,32 +47,32 @@ const frase = (a) => {
 function pintar(miembros, actividad, retiros) {
   const g = grupo(), inv = invitacionLink();
   const admin = esAdmin();
-  const umbral = `Un texto se valida con <b>${g.umbral_votos}</b> votos a favor y al menos <b>${fraccion(g.umbral_num, g.umbral_den)}</b> de los votos a favor. Vuelve a «en debate» si baja de la mitad. Quien administra también puede validar un texto por su cuenta: queda marcado como «validado por el admin» y los votos ya no lo mueven hasta que lo devuelva a debate.`;
+  const umbral = `Un aporte (texto, biografía, película o canción) se valida con <b>${g.umbral_votos}</b> votos a favor y al menos <b>${fraccion(g.umbral_num, g.umbral_den)}</b> de los votos a favor. Vuelve a «en debate» si baja de la mitad. Quien administra también puede validar un aporte por su cuenta: queda marcado como «validado por el admin» y los votos ya no lo mueven hasta que lo devuelva a debate.`;
   $("#gpBody").innerHTML = `
     ${admin && inv ? `<section class="caja" aria-labelledby="tInv"><h3 id="tInv">Invitar a alguien</h3>
       <p>Mandale este link. Al abrirlo elige su nombre y entra.</p>
       <div class="link-fila"><input id="gInv" readonly value="${esc(inv)}" aria-label="Link de invitación"><button type="button" class="boton" id="gCopiaInv">Copiar</button></div></section>` : ""}
-    <section class="caja" aria-labelledby="tUm"><h3 id="tUm">Cómo se valida un texto</h3><p>${umbral}</p>
+    <section class="caja" aria-labelledby="tUm"><h3 id="tUm">Cómo se valida un aporte</h3><p>${umbral}</p>
       ${admin ? `<form id="gUmbral" class="forma fila" novalidate><label class="campo"><span>Votos a favor</span><input type="number" name="v" min="1" max="50" value="${g.umbral_votos}" required></label>
         <label class="campo"><span>Fracción a favor</span><select name="f">${FRACCIONES.map((f) => `<option value="${f[0]}/${f[1]}"${f[0] === g.umbral_num && f[1] === g.umbral_den ? " selected" : ""}>${f[2]}</option>`).join("")}</select></label>
         <button class="boton sec" type="submit">Guardar</button></form>` : ""}</section>
     ${admin && retiros.length ? `<section class="caja" aria-labelledby="tRet"><h3 id="tRet">Pedidos de retiro <span class="cuenta">${retiros.length}</span></h3>
       <ul class="lista-llana">${retiros.map((r) => `<li data-t="${r.texto_id}"><b>«${esc(r.titulo)}»</b>, de ${esc(r.autor)} · lo pidió ${esc(r.pedido_por || "alguien que ya no está")}${r.motivo ? `: ${esc(r.motivo)}` : ""}
         <br><span class="menor">${r.combinaciones.map((c) => `<a href="#c/${enRuta(c)}">${esc(etiqueta(c))}</a>`).join(" · ")}</span>
-        <div class="acciones"><button type="button" class="boton peligro" data-ret="borrar">Borrar el texto</button><button type="button" class="boton sec" data-ret="dejar">Dejarlo</button></div></li>`).join("")}</ul></section>` : ""}
+        <div class="acciones"><button type="button" class="boton peligro" data-ret="borrar">Borrar</button><button type="button" class="boton sec" data-ret="dejar">Dejarlo</button></div></li>`).join("")}</ul></section>` : ""}
     <section class="caja" aria-labelledby="tMi"><h3 id="tMi">Miembros <span class="cuenta">${miembros.length}</span></h3>
       <ul class="lista-llana miembros">${miembros.map((m) => `<li data-m="${m.id}"><span><b>${esc(m.nombre)}</b>${m.rol === "admin" ? ` <span class="pill">administra</span>` : ""}${m.id === yo().id ? " (vos)" : ""}
-        <span class="menor"> · ${plural(Number(m.textos), "texto", "textos")} · ${plural(Number(m.votos), "voto", "votos")}</span></span>
+        <span class="menor"> · ${plural(Number(m.textos), "aporte", "aportes")} · ${plural(Number(m.votos), "voto", "votos")}</span></span>
         ${admin && m.id !== yo().id ? `<button type="button" class="enlace peligro" data-exp="${m.id}" data-n="${esc(m.nombre)}">Expulsar</button>` : ""}</li>`).join("")}</ul></section>
     <section class="caja" aria-labelledby="tAct"><h3 id="tAct">Lo último que pasó</h3>
-      ${actividad.length ? `<ul class="lista-llana act">${actividad.map((a) => `<li>${frase(a)} <span class="menor">· ${hace(a.cuando)}</span></li>`).join("")}</ul>` : `<p class="ayuda">Todavía no pasó nada: proponé el primer texto.</p>`}</section>
+      ${actividad.length ? `<ul class="lista-llana act">${actividad.map((a) => `<li>${frase(a)} <span class="menor">· ${hace(a.cuando)}</span></li>`).join("")}</ul>` : `<p class="ayuda">Todavía no pasó nada: proponé el primer aporte.</p>`}</section>
     <section class="caja" aria-labelledby="tVolver"><h3 id="tVolver">Tu link para volver</h3>
       <p>Para entrar desde otro dispositivo (o si borrás los datos del navegador), abrí este link. <b>Es solo tuyo</b>: quien lo tenga puede entrar como vos.</p>
       <div class="link-fila"><input id="gVolver" readonly value="${esc(volverLink())}" aria-label="Link para volver"><button type="button" class="boton" id="gCopiaVolver">Copiar</button></div>
       <p class="ayuda" id="gVivo">${textoVivo()}</p>
       <p><button type="button" class="enlace peligro" id="gSalir">Salir de este dispositivo</button></p></section>
     ${admin ? `<section class="caja" aria-labelledby="tResp"><h3 id="tResp">Copia de seguridad</h3>
-      <p>Descarga todo el grupo (miembros, textos y votos) en un archivo. Conviene hacerlo de vez en cuando.</p>
+      <p>Descarga todo el grupo (miembros, aportes, votos y comentarios) en un archivo. Conviene hacerlo de vez en cuando.</p>
       <p><button type="button" class="boton sec" id="gExportar">Descargar todo (JSON)</button></p></section>` : ""}`;
 
   const cuerpo = $("#gpBody");
@@ -96,7 +99,7 @@ function pintar(miembros, actividad, retiros) {
   cuerpo.onclick = async (e) => {
     const exp = e.target.closest("[data-exp]");
     if (exp) {
-      if (!(await confirmar({ titulo: `Expulsar a ${exp.dataset.n}`, texto: "Se van sus votos (los estados se recalculan). Sus textos quedan, sin nombre de autor.", ok: "Expulsar", peligro: true }))) return;
+      if (!(await confirmar({ titulo: `Expulsar a ${exp.dataset.n}`, texto: "Se van sus votos (los estados se recalculan). Sus aportes quedan, sin nombre de autor.", ok: "Expulsar", peligro: true }))) return;
       try { await R("expulsar", { p_miembro: exp.dataset.exp }); aviso("Listo."); } catch (x) { aviso(mensaje(x), "mal"); }
       return actualizar();
     }
@@ -105,8 +108,8 @@ function pintar(miembros, actividad, retiros) {
       const t = ret.closest("li").dataset.t;
       try {
         if (ret.dataset.ret === "borrar") {
-          if (!(await confirmar({ titulo: "Borrar el texto", texto: "Se borra de todas las combinaciones, con sus votos. No se puede deshacer.", ok: "Borrar", peligro: true }))) return;
-          await R("borrar_texto", { p_texto: t }); aviso("Texto borrado.");
+          if (!(await confirmar({ titulo: "Borrar", texto: "Se borra de todas las combinaciones, con sus votos y comentarios. No se puede deshacer.", ok: "Borrar", peligro: true }))) return;
+          await R("borrar_texto", { p_texto: t }); aviso("Borrado.");
         } else { await R("descartar_pedido", { p_texto: t }); aviso("Se descartó el pedido."); }
       } catch (x) { aviso(mensaje(x), "mal"); }
       return actualizar();

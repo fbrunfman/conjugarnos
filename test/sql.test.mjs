@@ -41,7 +41,7 @@ await prueba("las tablas están cerradas para anon y authenticated", async () =>
 });
 await prueba("anon no puede crear grupos ni llamar a las ayudas internas", async () => {
   await db.exec("set role anon");
-  for (const q of [`select crear_grupo('x')`, `select _recalcular(gen_random_uuid())`, `select _forzar(gen_random_uuid(), gen_random_uuid())`, `select _yo('${clave(1)}')`]) {
+  for (const q of [`select crear_grupo('x')`, `select _recalcular(gen_random_uuid())`, `select _forzar(gen_random_uuid(), gen_random_uuid())`, `select _clase('texto')`, `select _enlace('cancion', 'https://x.y')`, `select _yo('${clave(1)}')`]) {
     let msg = ""; try { await db.query(q); } catch (e) { msg = e.message; }
     assert.match(msg, /permission denied/, q);
   }
@@ -632,6 +632,113 @@ await prueba("actualizar la base: volver a correr el esquema no pierde nada, y u
   assert.equal(await Q("ping"), "ok");
   assert.equal((await Q("sesion", { p_clave: clave(201) })).miembro.nombre, "Uno");
   await falla(Q("justificar", { p_clave: clave(202), p_vinculo: mars.vinculo_id, p_justificacion: "x" }), "sin_permiso");
+});
+
+await prueba("clases: texto, biografía, película y canción; el link solo en películas y canciones", async () => {
+  const P = (extra) => R("proponer", { p_clave: A, p_titulo: "Heroes", p_autor: "David Bowie", p_cuerpo: "", p_combinaciones: [["sun", "moon"]], ...extra });
+  // por defecto es un texto
+  const t0 = await R("proponer", { p_clave: A, ...propuesta({ p_titulo: "Por defecto", p_autor: "Q", p_combinaciones: [["sun", "moon"]] }) });
+  let f = await fila(B, "sun", "moon", "Por defecto");
+  assert.equal(f.texto.clase, "texto"); assert.equal(f.texto.enlace, null); assert.ok(t0.texto_id);
+  // una canción: con link, sin cuerpo
+  await P({ p_clase: "cancion", p_enlace: "  https://www.youtube.com/watch?v=abc123  " });
+  f = await fila(B, "sun", "moon", "Heroes");
+  assert.equal(f.texto.clase, "cancion"); assert.equal(f.texto.enlace, "https://www.youtube.com/watch?v=abc123");   // sin espacios de más
+  assert.equal(f.texto.cuerpo, ""); assert.equal(f.texto.palabras, 0);
+  // una película: sin link y sin cuerpo; y con cuerpo (sinopsis) y link
+  await P({ p_titulo: "Solaris", p_autor: "Tarkovski", p_clase: "pelicula" });
+  assert.equal((await fila(B, "sun", "moon", "Solaris")).texto.enlace, null);
+  await P({ p_titulo: "Stalker", p_autor: "Tarkovski", p_clase: "pelicula", p_cuerpo: "Una zona prohibida.", p_enlace: "http://ejemplo.org/tráiler" });
+  f = await fila(B, "sun", "moon", "Stalker");
+  assert.equal(f.texto.cuerpo, "Una zona prohibida."); assert.equal(f.texto.clase, "pelicula"); assert.equal(f.texto.palabras, 3);
+  // una biografía lleva cuerpo
+  await P({ p_titulo: "Clarice Lispector", p_autor: "Wikipedia", p_clase: "biografia", p_cuerpo: "Nació en Ucrania y creció en Recife." });
+  assert.equal((await fila(B, "sun", "moon", "Clarice Lispector")).texto.clase, "biografia");
+  // reglas
+  await falla(P({ p_titulo: "Sin cuerpo", p_clase: "biografia" }), "falta_texto");
+  await falla(P({ p_titulo: "Sin cuerpo", p_clase: "texto" }), "falta_texto");
+  await falla(P({ p_titulo: "Sin cuerpo" }), "falta_texto");                                                    // el tipo por defecto es texto
+  await falla(P({ p_titulo: "Rara", p_clase: "libro" }), "clase_invalida");
+  await falla(P({ p_titulo: "Con link", p_clase: "texto", p_cuerpo: "hola", p_enlace: "https://x.org" }), "enlace_no_corresponde");
+  await falla(P({ p_titulo: "Con link", p_clase: "biografia", p_cuerpo: "hola", p_enlace: "https://x.org" }), "enlace_no_corresponde");
+  for (const malo of ["ftp://x.org/a", "javascript:alert(1)", "www.youtube.com/watch?v=1", "https://con espacio.org", "https://", "https://x.org/" + "a".repeat(500)]) {
+    await falla(P({ p_titulo: "Mal link", p_clase: "cancion", p_enlace: malo }), "enlace_invalido");
+  }
+  assert.equal(await fila(B, "sun", "moon", "Mal link"), undefined);                                           // no quedó nada a medias
+  await P({ p_titulo: "Link justo", p_clase: "cancion", p_enlace: "https://x.org/" + "a".repeat(486) });          // 500 justo
+  assert.equal((await fila(B, "sun", "moon", "Link justo")).texto.enlace.length, 500);
+  // el mismo título y autor se puede repetir si es de otra clase, pero no dentro de la misma
+  await P({ p_clase: "pelicula" });
+  await falla(P({ p_clase: "pelicula" }), "texto_repetido");
+  await falla(P({ p_clase: "cancion" }), "texto_repetido");
+  // el límite de palabras también cuenta en las biografías
+  await falla(P({ p_titulo: "Larga", p_autor: "Z", p_clase: "biografia", p_cuerpo: palabras(2001) }), "texto_largo");
+});
+
+await prueba("clases: editar una canción o película cambia su link y no su clase", async () => {
+  const t = await R("proponer", { p_clave: B, p_titulo: "Canción editable", p_autor: "Artista", p_cuerpo: "", p_combinaciones: [["mars"]], p_clase: "cancion", p_enlace: "https://a.org/1" });
+  const ed = (extra = {}) => R("editar_texto", { p_clave: B, p_texto: t.texto_id, p_titulo: "Canción editable", p_autor: "Artista", p_cuerpo: "", ...extra });
+  await ed({ p_enlace: "https://a.org/2" });
+  assert.equal((await fila(A, "mars", null, "Canción editable")).texto.enlace, "https://a.org/2");
+  await ed({ p_enlace: "" });                                                                                    // vacío = sin link
+  assert.equal((await fila(A, "mars", null, "Canción editable")).texto.enlace, null);
+  await ed({ p_enlace: "https://a.org/3", p_cuerpo: "una nota" });
+  const f = await fila(A, "mars", null, "Canción editable");
+  assert.equal(f.texto.clase, "cancion"); assert.equal(f.texto.cuerpo, "una nota"); assert.equal(f.texto.enlace, "https://a.org/3");
+  await falla(ed({ p_enlace: "ftp://x" }), "enlace_invalido");
+  // un texto no puede quedar vacío ni llevar link
+  const x = await R("proponer", { p_clave: B, ...propuesta({ p_titulo: "Texto firme", p_autor: "Q", p_combinaciones: [["mars"]] }) });
+  const edx = (extra) => R("editar_texto", { p_clave: B, p_texto: x.texto_id, p_titulo: "Texto firme", p_autor: "Q", p_cuerpo: "algo", ...extra });
+  await falla(edx({ p_cuerpo: "  " }), "falta_texto");
+  await falla(edx({ p_enlace: "https://a.org" }), "enlace_no_corresponde");
+  // el mismo título y autor, en otra clase, no choca al editar
+  await R("proponer", { p_clave: B, p_titulo: "Doble", p_autor: "Z", p_cuerpo: "cuerpo", p_combinaciones: [["mars"]] });
+  const y = await R("proponer", { p_clave: B, p_titulo: "Otro", p_autor: "Z", p_cuerpo: "", p_combinaciones: [["mars"]], p_clase: "cancion" });
+  await R("editar_texto", { p_clave: B, p_texto: y.texto_id, p_titulo: "Doble", p_autor: "Z", p_cuerpo: "" });
+});
+
+await prueba("clases: la base misma rechaza un texto vacío o un link raro, aunque se salten las funciones", async () => {
+  const g = (await R("sesion", { p_clave: A })).grupo.id;
+  const ins = (c) => db.query(`insert into texto (grupo_id, titulo, autor, cuerpo, palabras, ${c.cols}) values ('${g}', 'x', 'y', '${c.cuerpo}', 0, ${c.vals})`);
+  const mal = async (c, m) => { let e = ""; try { await ins(c); } catch (x) { e = x.message; } assert.match(e, m, JSON.stringify(c)); };
+  await mal({ cols: "clase", vals: "'texto'", cuerpo: "" }, /texto_cuerpo_requerido/);
+  await mal({ cols: "clase", vals: "'biografia'", cuerpo: "  " }, /texto_cuerpo_requerido/);
+  await mal({ cols: "clase", vals: "'libro'", cuerpo: "a" }, /clase/);
+  await mal({ cols: "clase, enlace", vals: "'cancion', 'javascript:alert(1)'", cuerpo: "" }, /texto_enlace_valido/);
+  await ins({ cols: "clase, enlace", vals: "'cancion', 'https://ok.org'", cuerpo: "" });                         // y esto sí
+  await db.exec(`delete from texto where titulo = 'x' and autor = 'y'`);
+});
+
+await prueba("clases: van en la actividad y en la copia de seguridad", async () => {
+  await R("proponer", { p_clave: A, p_titulo: "Para la copia", p_autor: "Artista", p_cuerpo: "", p_combinaciones: [["pluto"]], p_clase: "cancion", p_enlace: "https://s.org/1" });
+  const act = (await R("actividad", { p_clave: A, p_n: 100 })).find((x) => x.tipo === "texto" && x.titulo === "Para la copia");
+  assert.equal(act.clase, "cancion");
+  const ex = await R("exportar", { p_clave: ADM });
+  const t = ex.textos.find((x) => x.titulo === "Para la copia");
+  assert.equal(t.clase, "cancion"); assert.equal(t.enlace, "https://s.org/1");
+  assert.equal(ex.textos.find((x) => x.titulo === "Por defecto").clase, "texto");
+});
+
+await prueba("actualizar la base: una base anterior (sin clase ni link, con la regla vieja del cuerpo) suma lo nuevo sin perder textos", async () => {
+  const esquema = fs.readFileSync(SCHEMA, "utf8");
+  const d = await nuevaBase();
+  const Q = (n, a) => rpc(d, n, a);
+  const g2 = (await d.query(`select crear_grupo('Anterior') as r`)).rows[0].r;
+  await Q("unirse", { p_codigo: g2.codigo_admin, p_nombre: "Admin", p_clave: clave(300) });
+  const t = await Q("proponer", { p_clave: clave(300), p_titulo: "De antes", p_autor: "Z", p_cuerpo: "cuerpo de antes", p_combinaciones: [["sun"]] });
+  // se deja la tabla como estaba antes de las clases
+  await d.exec(`alter table texto drop constraint texto_cuerpo_largo, drop constraint texto_cuerpo_requerido, drop constraint texto_enlace_valido;
+                alter table texto drop column clase, drop column enlace;
+                alter table texto add constraint texto_cuerpo_check check (length(btrim(cuerpo)) >= 1 and length(cuerpo) <= 200000)`);
+  await d.exec(esquema);
+  const cons = async () => (await d.query(`select conname from pg_constraint where conrelid = 'texto'::regclass and conname like 'texto_%' order by 1`)).rows.map((r) => r.conname);
+  assert.deepEqual((await cons()).filter((c) => /^texto_(cuerpo_(largo|requerido|check)|enlace_valido)$/.test(c)), ["texto_cuerpo_largo", "texto_cuerpo_requerido", "texto_enlace_valido"]);   // la vieja se fue
+  const f = (await Q("combinacion", { p_clave: clave(300), p_a: "sun", p_b: null }))[0];
+  assert.equal(f.texto.titulo, "De antes"); assert.equal(f.texto.clase, "texto"); assert.equal(f.texto.enlace, null);
+  await Q("proponer", { p_clave: clave(300), p_titulo: "Nueva", p_autor: "Z", p_cuerpo: "", p_combinaciones: [["sun"]], p_clase: "cancion", p_enlace: "https://a.org" });   // ya acepta cuerpo vacío en canciones
+  await d.exec(esquema);                                                                                          // y volver a correrlo no repite reglas
+  assert.deepEqual((await cons()).filter((c) => /^texto_(cuerpo_(largo|requerido|check)|enlace_valido)$/.test(c)), ["texto_cuerpo_largo", "texto_cuerpo_requerido", "texto_enlace_valido"]);
+  assert.ok(t.texto_id);
 });
 
 await prueba("avisos en vivo: cada cambio avisa solo al canal de su grupo", async () => {

@@ -77,10 +77,10 @@ async function enrutar() {
   document.title = "Conjugarnos";
   const combo = r === "c" ? deRuta(arg) : null;
   if (r === "c" && combo) { cual = Combinacion; pag = "grilla"; await Combinacion.montar(main, combo); }
-  else if (r === "proponer") { pag = "proponer"; cual = null; Proponer.montar(main, { combo: Proponer.comboDeRuta(arg) }); document.title = "Proponer un texto · Conjugarnos"; }
+  else if (r === "proponer") { pag = "proponer"; cual = null; Proponer.montar(main, { combo: Proponer.comboDeRuta(arg) }); document.title = "Proponer · Conjugarnos"; }
   else if (r === "editar") {
     if (!E.editando) { location.hash = "#grilla"; return; }
-    pag = "grilla"; cual = null; Proponer.montar(main, { edicion: E.editando.texto }); document.title = "Editar el texto · Conjugarnos";
+    pag = "grilla"; cual = null; Proponer.montar(main, { edicion: E.editando.texto }); document.title = "Editar · Conjugarnos";
   }
   else if (r === "grupo") { pag = "grupo"; cual = Grupo; await Grupo.montar(main); }
   else { if (r && r !== "grilla") history.replaceState(null, "", "#grilla"); document.title = "Grilla · Conjugarnos"; await Grilla.montar(main); }

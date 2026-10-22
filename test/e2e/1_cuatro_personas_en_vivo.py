@@ -38,7 +38,7 @@ with sync_playwright() as p:
     chk(True,'combinación vacía muestra la invitación a proponer')
     # Federico propone desde la combinación
     fede.goto(URL+'/#c/saturn-pluto'); fede.wait_for_selector('.vacio-msg')
-    fede.click('text=Proponer un texto'); fede.wait_for_selector('#fProp')
+    fede.click('text=Proponer para esta combinación'); fede.wait_for_selector('#fProp')
     chk(fede.locator('#pCombos .chip').count()==1 and 'Saturno + Plutón' in fede.inner_text('#pCombos'),'proponer: la combinación viene elegida')
     fede.fill('input[name=autor]','Franz Kafka'); fede.fill('textarea[name=cuerpo]',KAFKA)
     chk(fede.locator('input[name=fuente], input[name=traductor], input[name=tipo]').count()==0,'proponer: ya no hay fuente, traductor ni tipo')
@@ -74,7 +74,7 @@ with sync_playwright() as p:
     # planeta solo → parejas
     fede.goto(URL+'/#c/saturn'); fede.wait_for_selector('.parejas')
     chk(fede.locator('.parejas a.chip.con').count()==1 and 'Saturno + Plutón' in fede.inner_text('.parejas a.chip.con'),'planeta solo: muestra sus parejas, con la que tiene texto')
-    chk('Sin textos validados' in fede.inner_text('.sub'),'Saturno solo no tiene textos propios')
+    chk('Sin aportes validados' in fede.inner_text('.sub'),'Saturno solo no tiene nada propio')
     fede.screenshot(path=S+'/e1_saturno_solo.png',full_page=True)
     # no hay texto «al azar»: la combinación muestra todos sus textos, completos
     fede.goto(URL+'/#c/saturn-pluto'); fede.wait_for_selector('.tx')

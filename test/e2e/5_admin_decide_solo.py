@@ -43,7 +43,7 @@ with sync_playwright() as p:
     proponer(fede,'venus-mars','Directo del admin',validar=True)
     chk(tx(fede,'Directo del admin').get_attribute('class').split().count('validado')==1,'cargado ya validado: queda validado')
     chk('Validado por Federico (admin)' in tx(fede,'Directo del admin').locator('.v-resumen').inner_text(),'el resumen dice «Validado por Federico (admin)»')
-    chk('validado' in fede.inner_text('.sub').lower() and '1 texto validado' in fede.inner_text('.sub'),'cuenta como texto validado de la combinación')
+    chk('validado' in fede.inner_text('.sub').lower() and '1 aporte validado' in fede.inner_text('.sub'),'cuenta como aporte validado de la combinación')
     ana.wait_for_selector('.tx.validado',timeout=8000)
     chk('Validado por Federico (admin)' in tx(ana,'Directo del admin').locator('.v-resumen').inner_text(),'EN VIVO: Ana lo ve validado por el admin')
     chk(ana.locator('[data-validar], [data-devolver]').count()==0,'un miembro no ve los botones del admin')
@@ -96,7 +96,7 @@ with sync_playwright() as p:
     # ---- el grupo lo muestra ----
     ana.goto(URL+'/#grupo'); ana.wait_for_selector('#gpBody .caja')
     chk('validó «Directo del admin»' in ana.inner_text('#gpBody') and 'por su cuenta' in ana.inner_text('#gpBody'),'Grupo: la actividad dice que el admin validó por su cuenta')
-    chk('validar un texto por su cuenta' in ana.inner_text('#gpBody'),'Grupo: la regla está explicada para todos')
+    chk('validar un aporte por su cuenta' in ana.inner_text('#gpBody'),'Grupo: la regla está explicada para todos')
 
     # ---- en el celular, sin desbordes ----
     cel=b.new_context(viewport={'width':360,'height':800}); pc=cel.new_page()

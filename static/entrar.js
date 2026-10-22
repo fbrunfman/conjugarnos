@@ -15,7 +15,7 @@ export function codigoDe(texto) {
 export function bienvenida(el, { vencida = false } = {}) {
   el.innerHTML = `<section class="pantalla estrecha" aria-labelledby="tBien">
     <h2 id="tBien">Una biblioteca viva de planetas</h2>
-    <p class="lead">Un grupo de amigos junta textos (cuentos, poemas, letras) que le quedan bien a un planeta o a una pareja de planetas, y los valida votando.</p>
+    <p class="lead">Un grupo de amigos junta textos, biografías, películas y canciones que le quedan bien a un planeta o a una pareja de planetas, y los valida votando.</p>
     ${vencida ? `<p class="nota mal" role="alert">Tu sesión ya no es válida en este dispositivo. Si te invitaron de nuevo, usá el link nuevo; si cambiaste de dispositivo, usá tu «link para volver».</p>` : ""}
     <p>Para entrar necesitás el <strong>link de invitación</strong> de tu grupo. Si lo tenés, pegalo acá:</p>
     <form id="fCodigo" class="forma" novalidate>
@@ -42,7 +42,7 @@ export function entrar(el, codigo, { alEntrar }) {
   }
   el.innerHTML = `<section class="pantalla estrecha" aria-labelledby="tEnt">
     <h2 id="tEnt">Te invitaron a un grupo</h2>
-    <p class="lead">Elegí el nombre con el que vas a proponer textos y votar. Lo ve todo el grupo.</p>
+    <p class="lead">Elegí el nombre con el que vas a proponer y votar. Lo ve todo el grupo.</p>
     <form id="fEntrar" class="forma" novalidate>
       <label class="campo"><span>Tu nombre</span><input name="n" maxlength="40" required autocomplete="nickname" autofocus></label>
       <p class="error" id="eEnt" role="alert" hidden></p>

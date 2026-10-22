@@ -56,8 +56,10 @@ create table if not exists texto (
   grupo_id           uuid not null references grupo(id) on delete cascade,
   titulo             text not null check (length(btrim(titulo)) between 1 and 200),
   autor              text not null check (length(btrim(autor)) between 1 and 120),
-  cuerpo             text not null check (length(btrim(cuerpo)) >= 1 and length(cuerpo) <= 200000),
+  cuerpo             text not null,                  -- el texto, la biografía; en una película o una canción puede quedar vacío
   palabras           int  not null,
+  clase              text not null default 'texto' check (clase in ('texto', 'biografia', 'pelicula', 'cancion')),
+  enlace             text,                           -- solo películas y canciones: un link (tráiler, YouTube, Spotify…)
   cargado_por        uuid references miembro(id) on delete set null,
   retiro_pedido_por  uuid references miembro(id) on delete set null,
   retiro_motivo      text check (retiro_motivo is null or length(retiro_motivo) <= 300),
@@ -66,6 +68,22 @@ create table if not exists texto (
 );
 -- Versiones anteriores tenían fuente, traductor y tipo: si la base ya existía, se sacan (no pasa nada si no estaban).
 alter table texto drop column if exists fuente, drop column if exists traductor, drop column if exists tipo;
+-- Si la base ya existía de antes: se suman la clase (texto, biografía, película o canción) y el link, y el cuerpo puede quedar vacío
+-- en películas y canciones. Las reglas llevan nombre para poder volver a correr esto sin repetirlas.
+alter table texto add column if not exists clase text not null default 'texto' check (clase in ('texto', 'biografia', 'pelicula', 'cancion'));
+alter table texto add column if not exists enlace text;
+alter table texto drop constraint if exists texto_cuerpo_check;      -- la regla de antes: el cuerpo no podía estar vacío
+do $$ begin
+  if not exists (select 1 from pg_constraint where conrelid = 'texto'::regclass and conname = 'texto_cuerpo_largo') then
+    alter table texto add constraint texto_cuerpo_largo check (length(cuerpo) <= 200000);
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'texto'::regclass and conname = 'texto_cuerpo_requerido') then
+    alter table texto add constraint texto_cuerpo_requerido check (clase in ('pelicula', 'cancion') or length(btrim(cuerpo)) >= 1);
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'texto'::regclass and conname = 'texto_enlace_valido') then
+    alter table texto add constraint texto_enlace_valido check (enlace is null or (length(enlace) <= 500 and enlace ~* '^https?://[^[:space:]]+$'));
+  end if;
+end $$;
 create index if not exists texto_grupo on texto (grupo_id);
 
 -- Un vínculo = un texto propuesto para una combinación (un planeta, o dos en el orden de siempre: Sol…Plutón).
@@ -193,6 +211,26 @@ create or replace function _admin(m miembro) returns void
 language plpgsql immutable as $$
 begin
   if m.rol <> 'admin' then raise exception 'solo_admin'; end if;
+end $$;
+
+-- La clase de lo que se propone: texto (por defecto), biografía, película o canción.
+create or replace function _clase(p_clase text) returns text
+language plpgsql immutable set search_path = public, pg_temp as $$
+declare c text := coalesce(nullif(btrim(p_clase), ''), 'texto');
+begin
+  if c not in ('texto', 'biografia', 'pelicula', 'cancion') then raise exception 'clase_invalida'; end if;
+  return c;
+end $$;
+
+-- El link, si lo hay: solo para películas y canciones, y tiene que ser http o https.
+create or replace function _enlace(p_clase text, p_enlace text) returns text
+language plpgsql immutable set search_path = public, pg_temp as $$
+declare e text := nullif(btrim(coalesce(p_enlace, '')), '');
+begin
+  if e is null then return null; end if;
+  if p_clase not in ('pelicula', 'cancion') then raise exception 'enlace_no_corresponde'; end if;
+  if length(e) > 500 or e !~* '^https?://[^[:space:]]+$' then raise exception 'enlace_invalido'; end if;
+  return e;
 end $$;
 
 -- Pone en orden una combinación y la valida. Devuelve {a, b}.
@@ -340,6 +378,7 @@ begin
         'texto', jsonb_build_object('id', t.id, 'titulo', t.titulo, 'autor', t.autor, 'cuerpo', t.cuerpo, 'palabras', t.palabras,
                   'cargado_por', mp.nombre, 'cargado_por_id', t.cargado_por, 'editado', t.editado,
                   'retiro_pedido', t.retiro_pedido_por is not null, 'retiro_motivo', t.retiro_motivo,
+                  'clase', t.clase, 'enlace', t.enlace,
                   'comentarios', coalesce((select jsonb_agg(jsonb_build_object('id', c.id, 'quien', mc.nombre, 'quien_id', c.miembro_id,
                                                                               'cuerpo', c.cuerpo, 'creado', c.creado) order by c.creado)
                                            from comentario c left join miembro mc on mc.id = c.miembro_id
@@ -377,7 +416,7 @@ declare m miembro := _yo(p_clave);
 begin
   return coalesce((select jsonb_agg(x.e order by x.cuando desc) from (
     select u.e, u.cuando from (
-      select jsonb_build_object('tipo', 'texto', 'quien', mp.nombre, 'titulo', t.titulo, 'cuando', t.creado) as e, t.creado as cuando
+      select jsonb_build_object('tipo', 'texto', 'quien', mp.nombre, 'titulo', t.titulo, 'clase', t.clase, 'cuando', t.creado) as e, t.creado as cuando
       from texto t left join miembro mp on mp.id = t.cargado_por where t.grupo_id = m.grupo_id
       union all
       select jsonb_build_object('tipo', 'voto', 'quien', mv.nombre, 'valor', o.valor, 'titulo', t.titulo,
@@ -401,14 +440,18 @@ end $$;
 -- p_combinaciones: [["saturn","pluto"], ["saturn"]]  (una pareja, o un planeta solo)
 -- p_validar (solo admin): el texto queda validado desde el principio en todas las combinaciones, sin votación.
 -- p_justificacion (opcional, hasta 500 caracteres): por qué se propone; se guarda en cada combinación elegida.
+-- p_clase: 'texto' (por defecto), 'biografia', 'pelicula' o 'cancion'. Texto y biografía llevan cuerpo; película y canción pueden no llevarlo.
+-- p_enlace (opcional, solo película y canción): un link http(s), por ejemplo el de la canción.
 drop function if exists proponer(text, text, text, text, text, text, text, jsonb);   -- la firma de antes (con fuente, traductor y tipo)
 drop function if exists proponer(text, text, text, text, jsonb);                    -- la firma de antes (sin p_validar)
 drop function if exists proponer(text, text, text, text, jsonb, boolean);           -- la firma de antes (sin p_justificacion)
+drop function if exists proponer(text, text, text, text, jsonb, boolean, text);     -- la firma de antes (sin p_clase ni p_enlace)
 create or replace function proponer(p_clave text, p_titulo text, p_autor text, p_cuerpo text, p_combinaciones jsonb,
-                                    p_validar boolean default false, p_justificacion text default null) returns jsonb
+                                    p_validar boolean default false, p_justificacion text default null,
+                                    p_clase text default 'texto', p_enlace text default null) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare m miembro := _yo(p_clave); g grupo; t texto; v vinculo; combo jsonb; combos jsonb[] := '{}'; ids uuid[] := '{}';
-        n int; ya uuid; el jsonb; j text := nullif(btrim(coalesce(p_justificacion, '')), '');
+        n int; ya uuid; el jsonb; j text := nullif(btrim(coalesce(p_justificacion, '')), ''); cl text := _clase(p_clase); en text := _enlace(_clase(p_clase), p_enlace);
 begin
   if coalesce(p_validar, false) then perform _admin(m); end if;
   if j is not null and length(j) > 500 then raise exception 'justificacion_larga'; end if;
@@ -417,7 +460,7 @@ begin
   if jsonb_array_length(p_combinaciones) > 12 then raise exception 'demasiadas_combinaciones'; end if;
   if length(btrim(coalesce(p_titulo, ''))) = 0 then raise exception 'falta_titulo'; end if;
   if length(btrim(coalesce(p_autor, ''))) = 0 then raise exception 'falta_autor'; end if;
-  if length(btrim(coalesce(p_cuerpo, ''))) = 0 then raise exception 'falta_texto'; end if;
+  if cl in ('texto', 'biografia') and length(btrim(coalesce(p_cuerpo, ''))) = 0 then raise exception 'falta_texto'; end if;
   n := _palabras(p_cuerpo);
   if n > g.max_palabras then raise exception 'texto_largo'; end if;
   for el in select * from jsonb_array_elements(p_combinaciones) loop
@@ -425,11 +468,11 @@ begin
     combo := _combo(el->>0, el->>1);
     if not (combo = any (combos)) then combos := combos || combo; end if;
   end loop;
-  select id into ya from texto where grupo_id = g.id and lower(btrim(titulo)) = lower(btrim(p_titulo)) and lower(btrim(autor)) = lower(btrim(p_autor)) limit 1;
+  select id into ya from texto where grupo_id = g.id and clase = cl and lower(btrim(titulo)) = lower(btrim(p_titulo)) and lower(btrim(autor)) = lower(btrim(p_autor)) limit 1;
   if ya is not null then raise exception 'texto_repetido' using detail = ya::text; end if;
 
-  insert into texto (grupo_id, titulo, autor, cuerpo, palabras, cargado_por)
-  values (g.id, btrim(p_titulo), btrim(p_autor), btrim(p_cuerpo), n, m.id)
+  insert into texto (grupo_id, titulo, autor, cuerpo, palabras, cargado_por, clase, enlace)
+  values (g.id, btrim(p_titulo), btrim(p_autor), btrim(coalesce(p_cuerpo, '')), n, m.id, cl, en)
   returning * into t;
   foreach combo in array combos loop
     insert into vinculo (texto_id, grupo_id, planeta_a, planeta_b, propuesto_por, justificacion)
@@ -547,9 +590,11 @@ end $$;
 -- Puede editar quien cargó el texto o el admin. Cambiar el cuerpo reinicia los votos (y la validación del admin, si edita otra persona); corregir una errata, no
 -- (se considera errata si cambian hasta 3 palabras, o el 2 % del texto).
 drop function if exists editar_texto(text, uuid, text, text, text, text, text, text);   -- la firma de antes
-create or replace function editar_texto(p_clave text, p_texto uuid, p_titulo text, p_autor text, p_cuerpo text) returns jsonb
+-- La clase no se cambia. p_enlace: solo para película y canción (vacío = sin link).
+drop function if exists editar_texto(text, uuid, text, text, text);   -- la firma de antes (sin p_enlace)
+create or replace function editar_texto(p_clave text, p_texto uuid, p_titulo text, p_autor text, p_cuerpo text, p_enlace text default null) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
-declare m miembro := _yo(p_clave); t texto; g grupo; n int; cambia int; limite int; reinicia boolean; v record;
+declare m miembro := _yo(p_clave); t texto; g grupo; n int; cambia int; limite int; reinicia boolean; v record; en text;
 begin
   select * into t from texto where id = p_texto and grupo_id = m.grupo_id;
   if not found then raise exception 'texto_inexistente'; end if;
@@ -557,17 +602,18 @@ begin
   select * into g from grupo where id = m.grupo_id;
   if length(btrim(coalesce(p_titulo, ''))) = 0 then raise exception 'falta_titulo'; end if;
   if length(btrim(coalesce(p_autor, ''))) = 0 then raise exception 'falta_autor'; end if;
-  if length(btrim(coalesce(p_cuerpo, ''))) = 0 then raise exception 'falta_texto'; end if;
+  if t.clase in ('texto', 'biografia') and length(btrim(coalesce(p_cuerpo, ''))) = 0 then raise exception 'falta_texto'; end if;
+  en := _enlace(t.clase, p_enlace);
   n := _palabras(p_cuerpo);
   if n > g.max_palabras then raise exception 'texto_largo'; end if;
-  if exists (select 1 from texto where grupo_id = t.grupo_id and id <> t.id
+  if exists (select 1 from texto where grupo_id = t.grupo_id and id <> t.id and clase = t.clase
              and lower(btrim(titulo)) = lower(btrim(p_titulo)) and lower(btrim(autor)) = lower(btrim(p_autor))) then
     raise exception 'texto_repetido';
   end if;
-  cambia := _cambios(t.cuerpo, p_cuerpo);
+  cambia := _cambios(t.cuerpo, coalesce(p_cuerpo, ''));
   limite := 2 * greatest(3, ceil(_palabras(t.cuerpo) * 0.02)::int);   -- cada palabra cambiada cuenta 2 (una sale, una entra)
   reinicia := cambia > limite;
-  update texto set titulo = btrim(p_titulo), autor = btrim(p_autor), cuerpo = btrim(p_cuerpo), palabras = n, editado = now()
+  update texto set titulo = btrim(p_titulo), autor = btrim(p_autor), cuerpo = btrim(coalesce(p_cuerpo, '')), palabras = n, enlace = en, editado = now()
    where id = t.id;
   if reinicia then
     delete from voto where vinculo_id in (select id from vinculo where texto_id = t.id);
@@ -720,7 +766,7 @@ begin
     'miembros', coalesce((select jsonb_agg(jsonb_build_object('nombre', nombre, 'rol', rol, 'desde', creado) order by creado)
                           from miembro where grupo_id = m.grupo_id), '[]'::jsonb),
     'textos', coalesce((select jsonb_agg(jsonb_build_object(
-        'titulo', t.titulo, 'autor', t.autor, 'cuerpo', t.cuerpo,
+        'clase', t.clase, 'titulo', t.titulo, 'autor', t.autor, 'cuerpo', t.cuerpo, 'enlace', t.enlace,
         'cargado_por', (select nombre from miembro where id = t.cargado_por), 'creado', t.creado,
         'comentarios', coalesce((select jsonb_agg(jsonb_build_object('quien', mc.nombre, 'cuerpo', c.cuerpo, 'creado', c.creado) order by c.creado)
                                  from comentario c left join miembro mc on mc.id = c.miembro_id where c.texto_id = t.id), '[]'::jsonb),

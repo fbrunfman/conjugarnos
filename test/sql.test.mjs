@@ -28,7 +28,7 @@ const propuesta = (extra = {}) => ({
 const estado = async (cl, a, b) => (await R("combinacion", { p_clave: cl, p_a: a, p_b: b })).map((v) => v.estado);
 
 await prueba("las tablas están cerradas para anon y authenticated", async () => {
-  for (const t of ["grupo", "miembro", "texto", "vinculo", "voto"]) {
+  for (const t of ["grupo", "miembro", "texto", "vinculo", "voto", "comentario"]) {
     for (const rol of ["anon", "authenticated"]) {
       await db.exec(`set role ${rol}`);
       let msg = "";
@@ -444,6 +444,100 @@ await prueba("exportar: solo el admin, con nombres y votos, sin claves", async (
   assert.ok(kafka.combinaciones.some((c) => c.planetas.join() === "saturn,pluto" && c.votos.some((v) => v.nombre === "Ana")));
   const json = JSON.stringify(ex);
   assert.ok(!json.includes(A) && !json.includes("clave_hash"));
+});
+
+await prueba("comentarios: cualquiera del grupo comenta un texto y se ven con nombre en todas sus combinaciones", async () => {
+  const t = await R("proponer", { p_clave: A, ...propuesta({ p_titulo: "Con comentarios", p_autor: "Q", p_combinaciones: [["venus", "mars"], ["moon"]] }) });
+  assert.deepEqual((await fila(A, "venus", "mars", "Con comentarios")).texto.comentarios, []);
+  const c1 = await R("comentar", { p_clave: B, p_texto: t.texto_id, p_cuerpo: "  Me suena a Venus más que a Marte.  " });
+  await R("comentar", { p_clave: C, p_texto: t.texto_id, p_cuerpo: "Primera línea\nsegunda línea" });
+  assert.ok(c1.id);
+  for (const [a, b] of [["venus", "mars"], ["moon", null]]) {
+    const cs = (await fila(A, a, b, "Con comentarios")).texto.comentarios;
+    assert.equal(cs.length, 2);
+    assert.deepEqual(cs.map((c) => c.quien), ["Beto", "Cami"]);
+    assert.equal(cs[0].cuerpo, "Me suena a Venus más que a Marte.");           // sin espacios de más
+    assert.equal(cs[1].cuerpo, "Primera línea\nsegunda línea");                 // los saltos de línea se conservan
+    assert.ok(cs[0].id && cs[0].creado && cs[0].quien_id);
+  }
+  // reglas
+  await falla(R("comentar", { p_clave: B, p_texto: t.texto_id, p_cuerpo: "   " }), "falta_comentario");
+  await falla(R("comentar", { p_clave: B, p_texto: t.texto_id, p_cuerpo: null }), "falta_comentario");
+  await falla(R("comentar", { p_clave: B, p_texto: t.texto_id, p_cuerpo: "x".repeat(1001) }), "comentario_largo");
+  await R("comentar", { p_clave: B, p_texto: t.texto_id, p_cuerpo: "y".repeat(1000) });                    // 1000 entra justo
+  await falla(R("comentar", { p_clave: B, p_texto: "00000000-0000-0000-0000-000000000000", p_cuerpo: "hola" }), "texto_inexistente");
+  await falla(R("comentar", { p_clave: X, p_texto: t.texto_id, p_cuerpo: "soy de otro grupo" }), "texto_inexistente");   // otro grupo no entra
+  await falla(R("comentar", { p_clave: "corta", p_texto: t.texto_id, p_cuerpo: "hola" }), "no_autorizado");
+  assert.equal((await fila(A, "moon", null, "Con comentarios")).texto.comentarios.length, 3);
+});
+
+await prueba("comentarios: no tocan votos ni estado, y sobreviven a editar el texto", async () => {
+  const t = await R("proponer", { p_clave: A, ...propuesta({ p_titulo: "Sin efecto", p_autor: "Q", p_combinaciones: [["sun"]], p_cuerpo: "uno dos tres cuatro cinco seis siete ocho nueve diez" }) });
+  await R("votar", { p_clave: B, p_vinculo: t.vinculos[0], p_valor: "favor" });
+  const antes = await fila(C, "sun", null, "Sin efecto");
+  await R("comentar", { p_clave: C, p_texto: t.texto_id, p_cuerpo: "Un comentario" });
+  const despues = await fila(C, "sun", null, "Sin efecto");
+  assert.equal(despues.estado, antes.estado); assert.deepEqual(despues.favor, antes.favor); assert.deepEqual(despues.contra, antes.contra);
+  const r = await R("editar_texto", { p_clave: A, p_texto: t.texto_id, p_titulo: "Sin efecto", p_autor: "Q", p_cuerpo: "otro cuerpo completamente distinto del anterior, con muchas palabras nuevas" });
+  assert.equal(r.reiniciado, true);                                                                      // los votos se reinician...
+  assert.equal((await fila(C, "sun", null, "Sin efecto")).texto.comentarios.length, 1);                   // ...los comentarios no
+});
+
+await prueba("comentarios: borra quien lo escribió o el admin, nadie más", async () => {
+  const t = await R("proponer", { p_clave: A, ...propuesta({ p_titulo: "Para borrar", p_autor: "Q", p_combinaciones: [["jupiter"]] }) });
+  const mios = [];
+  for (const [cl, txt] of [[B, "de Beto"], [C, "de Cami"], [F, "de Fede2"]]) mios.push((await R("comentar", { p_clave: cl, p_texto: t.texto_id, p_cuerpo: txt })).id);
+  const lista = async () => (await fila(A, "jupiter", null, "Para borrar")).texto.comentarios.map((c) => c.cuerpo);
+  await falla(R("borrar_comentario", { p_clave: C, p_comentario: mios[0] }), "sin_permiso");               // el de Beto, no lo borra Cami
+  await falla(R("borrar_comentario", { p_clave: A, p_comentario: mios[0] }), "sin_permiso");               // ni quien cargó el texto
+  await falla(R("borrar_comentario", { p_clave: X, p_comentario: mios[0] }), "comentario_inexistente");    // ni otro grupo
+  assert.deepEqual(await lista(), ["de Beto", "de Cami", "de Fede2"]);
+  await R("borrar_comentario", { p_clave: B, p_comentario: mios[0] });                                     // el suyo
+  await R("borrar_comentario", { p_clave: ADM, p_comentario: mios[1] });                                   // el admin, cualquiera
+  assert.deepEqual(await lista(), ["de Fede2"]);
+  await falla(R("borrar_comentario", { p_clave: ADM, p_comentario: mios[1] }), "comentario_inexistente");
+  await falla(R("borrar_comentario", { p_clave: "corta", p_comentario: mios[2] }), "no_autorizado");
+});
+
+await prueba("comentarios: si la persona se va del grupo el comentario queda; si se borra el texto, se va con él", async () => {
+  const t = await R("proponer", { p_clave: A, ...propuesta({ p_titulo: "Queda y se va", p_autor: "Q", p_combinaciones: [["neptune"]] }) });
+  await R("comentar", { p_clave: F, p_texto: t.texto_id, p_cuerpo: "Dejo esto antes de irme" });
+  const fede2 = (await R("miembros", { p_clave: ADM })).find((m) => m.nombre === "Fede2").id;
+  await R("expulsar", { p_clave: ADM, p_miembro: fede2 });
+  const cs = (await fila(A, "neptune", null, "Queda y se va")).texto.comentarios;
+  assert.equal(cs.length, 1); assert.equal(cs[0].quien, null); assert.equal(cs[0].quien_id, null); assert.equal(cs[0].cuerpo, "Dejo esto antes de irme");
+  await R("borrar_texto", { p_clave: ADM, p_texto: t.texto_id });
+  assert.equal(Number((await db.query(`select count(*) n from comentario where texto_id = '${t.texto_id}'`)).rows[0].n), 0);
+});
+
+await prueba("comentarios: aparecen en la actividad (sin su contenido) y en la copia de seguridad", async () => {
+  const t = await R("proponer", { p_clave: A, ...propuesta({ p_titulo: "Actividad y copia", p_autor: "Q", p_combinaciones: [["uranus"]] }) });
+  await R("comentar", { p_clave: B, p_texto: t.texto_id, p_cuerpo: "Texto secreto del comentario" });
+  const act = await R("actividad", { p_clave: A, p_n: 100 });
+  const e = act.find((x) => x.tipo === "comentario" && x.titulo === "Actividad y copia");
+  assert.ok(e); assert.equal(e.quien, "Beto");
+  assert.ok(!JSON.stringify(act).includes("Texto secreto del comentario"));
+  const ex = await R("exportar", { p_clave: ADM });
+  const tx = ex.textos.find((x) => x.titulo === "Actividad y copia");
+  assert.deepEqual(tx.comentarios.map((c) => [c.quien, c.cuerpo]), [["Beto", "Texto secreto del comentario"]]);
+  assert.ok(!JSON.stringify(ex).includes("clave_hash"));
+});
+
+await prueba("comentarios: comentar y borrar avisan al canal del grupo", async () => {
+  const avisos = [];
+  const quitar = await db.listen("cambio", (p) => avisos.push(JSON.parse(p)));
+  const t = await R("proponer", { p_clave: A, ...propuesta({ p_titulo: "Aviso de comentario", p_autor: "Q", p_combinaciones: [["pluto"]] }) });
+  await new Promise((r) => setTimeout(r, 60));
+  avisos.length = 0;
+  const c = await R("comentar", { p_clave: B, p_texto: t.texto_id, p_cuerpo: "hola" });
+  await new Promise((r) => setTimeout(r, 60));
+  const alComentar = avisos.length;
+  await R("borrar_comentario", { p_clave: B, p_comentario: c.id });
+  await new Promise((r) => setTimeout(r, 60));
+  await quitar();
+  const topic1 = "g:" + (await R("sesion", { p_clave: A })).grupo.id;
+  assert.equal(alComentar, 1); assert.equal(avisos.length, 2);
+  assert.ok(avisos.every((a) => a.topic === topic1 && a.event === "cambio"));
 });
 
 await prueba("avisos en vivo: cada cambio avisa solo al canal de su grupo", async () => {

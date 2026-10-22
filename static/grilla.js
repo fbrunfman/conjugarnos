@@ -50,11 +50,12 @@ function pintar(filas) {
     <p class="acciones"><a class="boton" href="#proponer">Proponer un texto</a></p>
     <div class="grilla-caja"><table class="grilla"><caption class="vh">Combinaciones de planetas. Tocá una casilla para ver sus textos.</caption>
       <thead><tr><td></td>${cab}</tr></thead><tbody>${cuerpo}</tbody></table></div>
+    <p class="menor ref">Referencias (son ejemplos, no datos):</p>
     <ul class="leyenda" aria-label="Qué significa cada casilla">
-      <li><span class="mini cel val"><span>2</span></span> con texto validado (el número es cuántos)</li>
-      <li><span class="mini cel deb"><span>1</span></span> solo textos en debate</li>
+      <li><span class="mini cel val"><span>n</span></span> tiene textos validados; el número es cuántos</li>
+      <li><span class="mini cel deb"><span>n</span></span> tiene solo textos en debate; el número es cuántos</li>
       <li><span class="mini cel vac"></span> todavía sin texto</li>
-      <li><span class="mini cel solo val"><span></span></span> en la diagonal, el planeta solo</li>
+      <li><span class="mini cel solo vac"><span></span></span> en la diagonal, el planeta solo</li>
     </ul>`;
   document.getElementById("gCuerpo").onclick = (e) => {
     const b = e.target.closest(".cel[data-c]");

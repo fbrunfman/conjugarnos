@@ -1,5 +1,5 @@
 // Proponer un texto nuevo (o editar uno que ya está cargado).
-// Lleva título, autor y un máximo de palabras; se elige para qué combinaciones (un planeta o una pareja, hasta 12).
+// Lleva título, autor y un máximo de palabras; se elige para qué combinaciones (un planeta o una pareja; el máximo de 12 lo cuida el código).
 // Quien administra puede además cargarlo ya validado, sin votación (casilla opcional).
 // Mientras escribís se guarda un borrador en este dispositivo, por si se cierra la pestaña a la mitad.
 import { R, E, yo, grupo, esAdmin } from "./estado.js";
@@ -42,7 +42,7 @@ export function montar(el, { combo = [], edicion = null } = {}) {
         <small id="pCuenta" aria-live="polite"></small></label>
       ${editando ? `<p class="nota" id="pReinicia" role="note" hidden>${esc(avisoReinicio())}</p>` : `
       <fieldset class="combos"><legend>¿Para qué combinaciones?</legend>
-        <p class="ayuda">Un planeta solo o una pareja. Podés elegir hasta 12.</p>
+        <p class="ayuda">Un planeta solo o una pareja.</p>
         <ul id="pCombos" class="chips" aria-live="polite"></ul>
         <div id="pSel"></div>
         <p><button type="button" class="boton sec" id="pAgregar" disabled>Agregar esta combinación</button></p>

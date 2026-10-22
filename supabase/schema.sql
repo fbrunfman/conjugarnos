@@ -102,6 +102,17 @@ create table if not exists voto (
   check (valor = 'favor' or motivo is not null)
 );
 
+-- Un comentario es de un texto (se ve en todas las combinaciones donde está). Si la persona se va del grupo, el comentario queda.
+create table if not exists comentario (
+  id         uuid primary key default gen_random_uuid(),
+  texto_id   uuid not null references texto(id) on delete cascade,
+  grupo_id   uuid not null references grupo(id) on delete cascade,
+  miembro_id uuid references miembro(id) on delete set null,
+  cuerpo     text not null check (length(btrim(cuerpo)) between 1 and 1000),
+  creado     timestamptz not null default now()
+);
+create index if not exists comentario_texto on comentario (texto_id, creado);
+
 -- ---------- permisos: las tablas quedan cerradas ----------
 
 alter table grupo    enable row level security;
@@ -109,12 +120,13 @@ alter table miembro  enable row level security;
 alter table texto    enable row level security;
 alter table vinculo  enable row level security;
 alter table voto     enable row level security;
+alter table comentario enable row level security;
 do $$ begin
   if exists (select 1 from pg_roles where rolname = 'anon') then
-    revoke all on grupo, miembro, texto, vinculo, voto from anon;
+    revoke all on grupo, miembro, texto, vinculo, voto, comentario from anon;
   end if;
   if exists (select 1 from pg_roles where rolname = 'authenticated') then
-    revoke all on grupo, miembro, texto, vinculo, voto from authenticated;
+    revoke all on grupo, miembro, texto, vinculo, voto, comentario from authenticated;
   end if;
 end $$;
 
@@ -142,11 +154,13 @@ drop trigger if exists avisar_miembro on miembro;
 drop trigger if exists avisar_texto   on texto;
 drop trigger if exists avisar_vinculo on vinculo;
 drop trigger if exists avisar_voto    on voto;
+drop trigger if exists avisar_comentario on comentario;
 create trigger avisar_grupo   after update on grupo                       for each row execute function _avisar();
 create trigger avisar_miembro after insert or delete on miembro           for each row execute function _avisar();
 create trigger avisar_texto   after update or delete on texto             for each row execute function _avisar();
 create trigger avisar_vinculo after insert or update or delete on vinculo for each row execute function _avisar();
 create trigger avisar_voto    after insert or update or delete on voto    for each row execute function _avisar();
+create trigger avisar_comentario after insert or delete on comentario  for each row execute function _avisar();
 
 -- ---------- ayudas internas (no se pueden llamar desde afuera) ----------
 
@@ -299,7 +313,7 @@ begin
           from vinculo where grupo_id = m.grupo_id group by planeta_a, planeta_b) x), '[]'::jsonb);
 end $$;
 
--- Todo lo de una combinación exacta: los textos, su estado y los votos con nombre y motivo.
+-- Todo lo de una combinación exacta: los textos, su estado, los votos con nombre y motivo y los comentarios de cada texto.
 create or replace function combinacion(p_clave text, p_a text, p_b text default null) returns jsonb
 language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare m miembro := _yo(p_clave); c jsonb := _combo(p_a, p_b);
@@ -311,7 +325,11 @@ begin
         'forzado', v.forzado, 'forzado_por', (select x.nombre from miembro x where x.id = v.forzado_por),
         'texto', jsonb_build_object('id', t.id, 'titulo', t.titulo, 'autor', t.autor, 'cuerpo', t.cuerpo, 'palabras', t.palabras,
                   'cargado_por', mp.nombre, 'cargado_por_id', t.cargado_por, 'editado', t.editado,
-                  'retiro_pedido', t.retiro_pedido_por is not null, 'retiro_motivo', t.retiro_motivo),
+                  'retiro_pedido', t.retiro_pedido_por is not null, 'retiro_motivo', t.retiro_motivo,
+                  'comentarios', coalesce((select jsonb_agg(jsonb_build_object('id', c.id, 'quien', mc.nombre, 'quien_id', c.miembro_id,
+                                                                              'cuerpo', c.cuerpo, 'creado', c.creado) order by c.creado)
+                                           from comentario c left join miembro mc on mc.id = c.miembro_id
+                                           where c.texto_id = t.id), '[]'::jsonb)),
         'favor', coalesce((select jsonb_agg(jsonb_build_object('nombre', mv.nombre) order by o.cambiado)
                            from voto o join miembro mv on mv.id = o.miembro_id
                            where o.vinculo_id = v.id and o.valor = 'favor'), '[]'::jsonb),
@@ -338,7 +356,7 @@ begin
     from miembro x where x.grupo_id = m.grupo_id), '[]'::jsonb);
 end $$;
 
--- Lo último que pasó en el grupo: quién propuso qué, quién votó y qué validó el admin por su cuenta.
+-- Lo último que pasó en el grupo: quién propuso qué, quién votó, quién comentó (sin el comentario) y qué validó el admin por su cuenta.
 create or replace function actividad(p_clave text, p_n int default 30) returns jsonb
 language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare m miembro := _yo(p_clave);
@@ -356,6 +374,10 @@ begin
       select jsonb_build_object('tipo', 'validacion', 'quien', mf.nombre, 'titulo', t.titulo, 'a', v.planeta_a, 'b', v.planeta_b, 'cuando', v.forzado_en), v.forzado_en
       from vinculo v join texto t on t.id = v.texto_id left join miembro mf on mf.id = v.forzado_por
       where v.grupo_id = m.grupo_id and v.forzado
+      union all
+      select jsonb_build_object('tipo', 'comentario', 'quien', mc.nombre, 'titulo', t.titulo, 'cuando', c.creado), c.creado
+      from comentario c join texto t on t.id = c.texto_id left join miembro mc on mc.id = c.miembro_id
+      where c.grupo_id = m.grupo_id
     ) u order by u.cuando desc limit greatest(1, least(coalesce(p_n, 30), 100))
   ) x), '[]'::jsonb);
 end $$;
@@ -595,6 +617,32 @@ begin
   return jsonb_build_object('ok', true);
 end $$;
 
+-- ---------- comentarios ----------
+
+-- Comentar un texto: cualquiera del grupo, hasta 1000 caracteres.
+create or replace function comentar(p_clave text, p_texto uuid, p_cuerpo text) returns jsonb
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare m miembro := _yo(p_clave); c text := btrim(coalesce(p_cuerpo, '')); nuevo uuid;
+begin
+  if not exists (select 1 from texto where id = p_texto and grupo_id = m.grupo_id) then raise exception 'texto_inexistente'; end if;
+  if length(c) = 0 then raise exception 'falta_comentario'; end if;
+  if length(c) > 1000 then raise exception 'comentario_largo'; end if;
+  insert into comentario (texto_id, grupo_id, miembro_id, cuerpo) values (p_texto, m.grupo_id, m.id, c) returning id into nuevo;
+  return jsonb_build_object('id', nuevo);
+end $$;
+
+-- Borrar un comentario: quien lo escribió, o quien administra el grupo.
+create or replace function borrar_comentario(p_clave text, p_comentario uuid) returns jsonb
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare m miembro := _yo(p_clave); c comentario;
+begin
+  select * into c from comentario where id = p_comentario and grupo_id = m.grupo_id;
+  if not found then raise exception 'comentario_inexistente'; end if;
+  if m.rol <> 'admin' and c.miembro_id is distinct from m.id then raise exception 'sin_permiso'; end if;
+  delete from comentario where id = c.id;
+  return jsonb_build_object('ok', true);
+end $$;
+
 -- ---------- el grupo ----------
 
 create or replace function ajustar_umbral(p_clave text, p_votos int, p_num int, p_den int) returns jsonb
@@ -639,6 +687,8 @@ begin
     'textos', coalesce((select jsonb_agg(jsonb_build_object(
         'titulo', t.titulo, 'autor', t.autor, 'cuerpo', t.cuerpo,
         'cargado_por', (select nombre from miembro where id = t.cargado_por), 'creado', t.creado,
+        'comentarios', coalesce((select jsonb_agg(jsonb_build_object('quien', mc.nombre, 'cuerpo', c.cuerpo, 'creado', c.creado) order by c.creado)
+                                 from comentario c left join miembro mc on mc.id = c.miembro_id where c.texto_id = t.id), '[]'::jsonb),
         'combinaciones', coalesce((select jsonb_agg(jsonb_build_object(
             'planetas', case when v.planeta_b is null then jsonb_build_array(v.planeta_a) else jsonb_build_array(v.planeta_a, v.planeta_b) end,
             'estado', v.estado, 'validado_por_admin', v.forzado,
@@ -662,7 +712,7 @@ do $$ declare f record; begin
            where n.nspname = 'public' and p.prokind = 'f'
              and p.proname in ('ping', 'unirse', 'sesion', 'grilla', 'combinacion', 'miembros', 'actividad', 'proponer',
                                'agregar_combinacion', 'votar', 'quitar_voto', 'validar_ya', 'quitar_validacion', 'editar_texto', 'pedir_retiro', 'retiros', 'descartar_pedido',
-                               'borrar_texto', 'quitar_combinacion', 'ajustar_umbral', 'expulsar', 'exportar')
+                               'borrar_texto', 'quitar_combinacion', 'comentar', 'borrar_comentario', 'ajustar_umbral', 'expulsar', 'exportar')
   loop
     if exists (select 1 from pg_roles where rolname = 'anon') then execute format('grant execute on function %s to anon', f.sig); end if;
     if exists (select 1 from pg_roles where rolname = 'authenticated') then execute format('grant execute on function %s to authenticated', f.sig); end if;

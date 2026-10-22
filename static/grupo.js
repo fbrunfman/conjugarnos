@@ -36,6 +36,7 @@ export async function actualizar() {
 const frase = (a) => {
   const c = a.b ? [a.a, a.b] : [a.a];
   if (a.tipo === "texto") return `<b>${esc(a.quien || "Alguien que ya no está")}</b> propuso «${esc(a.titulo)}»`;
+  if (a.tipo === "comentario") return `<b>${esc(a.quien || "Alguien que ya no está")}</b> comentó «${esc(a.titulo)}»`;
   if (a.tipo === "validacion") return `<b>${esc(a.quien || "El admin")}</b> validó «${esc(a.titulo)}» para <a href="#c/${enRuta(c)}">${esc(etiqueta(c))}</a> por su cuenta`;
   return `<b>${esc(a.quien)}</b> votó ${a.valor === "favor" ? "a favor" : "en contra"} de «${esc(a.titulo)}» para <a href="#c/${enRuta(c)}">${esc(etiqueta(c))}</a>${a.estado === "validado" ? " · validado" : ""}`;
 };

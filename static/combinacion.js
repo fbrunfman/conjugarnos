@@ -1,6 +1,6 @@
 // Una combinación: todos sus textos, completos: primero los validados y después los que están en debate, con los votos de cada uno.
 // Se actualiza sola cuando alguien del grupo vota o propone; al volver a dibujar se conserva lo que estabas haciendo
-// (qué textos habías cerrado, un motivo a medio escribir, dónde estabas parado en la página).
+// (qué textos habías cerrado, qué comentarios tenías desplegados, un motivo o un comentario a medio escribir, dónde estabas parado en la página).
 import { R, E, yo, grupo, esAdmin } from "./estado.js";
 import { mensaje } from "./api.js";
 import { PLANETAS, NOMBRE, circuloDeco, etiqueta, enRuta, llave } from "./planetas.js";
@@ -9,6 +9,7 @@ import { esc, $, $$, aviso, plural, hace, confirmar, pedirTexto, dialogo, cuerpo
 
 let raiz = null, ids = [], filas = [], grilla = [], ficha = 0;
 const cerrados = new Set();          // vínculos cuyo texto largo cerraste vos (por defecto se ve todo completo)
+const charlando = new Set();         // vínculos con los comentarios desplegados (por defecto están plegados)
 let firmas = new Map();              // vínculo → «estado|a favor|en contra», para marcar lo que cambió
 let primera = true;
 
@@ -40,9 +41,11 @@ export async function actualizar() {
 function capturar() {
   const borradores = {};
   $$(".v-motivo:not([hidden])").forEach((f) => { borradores[f.closest(".tx").dataset.v] = { valor: f.querySelector("input").value, foco: document.activeElement === f.querySelector("input") }; });
-  return { y: scrollY, borradores };
+  const comentarios = {};
+  $$(".com-form textarea").forEach((t) => { if (t.value || document.activeElement === t) comentarios[t.closest(".tx").dataset.v] = { valor: t.value, foco: document.activeElement === t }; });
+  return { y: scrollY, borradores, comentarios };
 }
-function restaurar({ y, borradores }) {
+function restaurar({ y, borradores, comentarios }) {
   for (const [v, b] of Object.entries(borradores)) {
     const tx = $(`.tx[data-v="${CSS.escape(v)}"]`);
     if (!tx) continue;
@@ -50,6 +53,12 @@ function restaurar({ y, borradores }) {
     f.hidden = false; i.value = b.valor;
     tx.querySelector('[data-voto="contra"]').setAttribute("aria-expanded", "true");
     if (b.foco) i.focus({ preventScroll: true });
+  }
+  for (const [v, b] of Object.entries(comentarios)) {
+    const t = $(`.tx[data-v="${CSS.escape(v)}"] .com-form textarea`);
+    if (!t) continue;
+    t.value = b.valor;
+    if (b.foco) t.focus({ preventScroll: true });
   }
   scrollTo({ top: y, behavior: "instant" });
 }
@@ -63,10 +72,28 @@ function resumenEstado(f) {
   return `${nf} a favor y ${nc} en contra · faltan ${plural(k, "voto", "votos")} a favor para validar`;
 }
 
+const BURBUJA = `<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 4.5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-9.5L6 20.8v-4.3H4a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/></svg>`;
+
+/** Los comentarios del texto y la casilla para escribir uno. Solo se dibuja cuando están desplegados. */
+function panelComentarios(f) {
+  const t = f.texto, lista = t.comentarios || [];
+  return `<div class="coment">
+    ${lista.length ? `<ul class="com-lista">${lista.map((c) => `<li data-c="${c.id}">
+      <p class="com-meta"><b>${esc(c.quien || "Alguien que ya no está")}</b> · ${esc(hace(c.creado))}${esAdmin() || c.quien_id === yo().id ? ` · <button type="button" class="enlace peligro" data-borrar-com="${c.id}">Borrar</button>` : ""}</p>
+      <p class="com-cuerpo">${esc(c.cuerpo)}</p></li>`).join("")}</ul>` : `<p class="menor com-vacio">Todavía no hay comentarios en este texto.</p>`}
+    <form class="com-form"><label class="campo"><span class="vh">Tu comentario</span>
+      <textarea rows="2" maxlength="1000" placeholder="Escribí un comentario…"></textarea></label>
+      <div class="com-b"><button type="submit" class="boton">Comentar</button>
+        <span class="menor">Es del texto: se ve en todas las combinaciones donde está.</span></div>
+      <p class="error" role="alert" hidden></p></form>
+  </div>`;
+}
+
 function tarjeta(f) {
   const t = f.texto, mio = f.mi_voto, id = f.vinculo_id;
   const largo = t.palabras > 90, abierto = !cerrados.has(id) || !largo;
   const otrosVotos = [...f.favor, ...f.contra].some((v) => v.nombre !== yo().nombre);
+  const nCom = (t.comentarios || []).length;
   const puedeEditar = esAdmin() || t.cargado_por_id === yo().id;
   const puedeQuitar = esAdmin() || (t.cargado_por_id === yo().id && !otrosVotos);
   return `<article class="tx ${f.estado}" data-v="${id}" data-t="${t.id}" aria-labelledby="tt-${id}">
@@ -75,7 +102,11 @@ function tarjeta(f) {
     <p class="tx-meta menor">${plural(t.palabras, "palabra", "palabras")} · cargado por ${esc(t.cargado_por || "alguien que ya no está")}${t.editado ? " · editado" : ""}</p>
     ${t.retiro_pedido ? `<p class="nota" role="note">Se pidió retirar este texto${t.retiro_motivo ? `: ${esc(t.retiro_motivo)}` : ""}. Lo decide quien administra el grupo.</p>` : ""}
     <div class="tx-cuerpo cmb-text${abierto ? " abierto" : ""}" id="cu-${id}">${cuerpoHTML(t.cuerpo)}</div>
-    ${largo ? `<button type="button" class="enlace leer" data-leer aria-expanded="${abierto}" aria-controls="cu-${id}">${abierto ? "Mostrar menos" : `Leer completo (${t.palabras} palabras)`}</button>` : ""}
+    <div class="tx-pie">
+      ${largo ? `<button type="button" class="enlace leer" data-leer aria-expanded="${abierto}" aria-controls="cu-${id}">${abierto ? "Mostrar menos" : `Leer completo (${t.palabras} palabras)`}</button>` : ""}
+      <button type="button" class="com-btn" data-coment aria-expanded="${charlando.has(id)}" aria-controls="co-${id}" aria-label="Comentarios${nCom ? ` (${nCom})` : ""}" title="${nCom ? plural(nCom, "comentario", "comentarios") : "Comentar este texto"}">${BURBUJA}${nCom ? `<span class="com-n">${nCom}</span>` : ""}</button>
+    </div>
+    <div class="com-hueco" id="co-${id}">${charlando.has(id) ? panelComentarios(f) : ""}</div>
     <div class="votos">
       <p class="v-resumen">${esc(resumenEstado(f))}</p>
       <div class="v-botones">
@@ -134,7 +165,7 @@ function pintar() {
   // lo que cambió desde la última vez, marcado un momento
   const nuevas = new Map();
   for (const f of filas) {
-    const firma = `${f.estado}|${f.forzado ? "a" : ""}|${f.favor.length}|${f.contra.length}`;
+    const firma = `${f.estado}|${f.forzado ? "a" : ""}|${f.favor.length}|${f.contra.length}|${(f.texto.comentarios || []).length}`;
     nuevas.set(f.vinculo_id, firma);
     if (!primera && firmas.get(f.vinculo_id) !== firma) marcar(f.vinculo_id);
   }
@@ -158,6 +189,9 @@ function conectar() {
     const v = tx.dataset.v, f = filas.find((x) => x.vinculo_id === v);
     if (!f) return;
     if (e.target.closest("[data-leer]")) return alternar(tx, v);
+    if (e.target.closest("[data-coment]")) return alternarComentarios(tx, f);
+    const borrarCom = e.target.closest("[data-borrar-com]");
+    if (borrarCom) return borrarComentario(borrarCom.dataset.borrarCom);
     const voto = e.target.closest("[data-voto]");
     if (voto) return voto.dataset.voto === "favor" ? votar(v, "favor") : motivo(tx, f);
     if (e.target.closest("[data-cancelar]")) return cerrarMotivo(tx);
@@ -167,7 +201,12 @@ function conectar() {
     const acc = e.target.closest("[data-acc]");
     if (acc) { tx.querySelector(".menu").open = false; return accion(acc.dataset.acc, f); }
   };
+  cuerpo.onkeydown = (e) => {    // Cmd/Ctrl + Enter envía el comentario
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && e.target.matches(".com-form textarea")) { e.preventDefault(); e.target.form.requestSubmit(); }
+  };
   cuerpo.onsubmit = async (e) => {
+    const comentario = e.target.closest(".com-form");
+    if (comentario) { e.preventDefault(); return comentar(comentario); }
     const form = e.target.closest(".v-motivo");
     if (!form) return;
     e.preventDefault();
@@ -186,6 +225,34 @@ function alternar(tx, v) {
   if (abrir) cerrados.delete(v); else cerrados.add(v);
   b.setAttribute("aria-expanded", String(abrir));
   b.textContent = abrir ? "Mostrar menos" : `Leer completo (${filas.find((x) => x.vinculo_id === v).texto.palabras} palabras)`;
+}
+
+// ---- comentarios: plegados por defecto; el ícono los despliega ----
+function alternarComentarios(tx, f) {
+  const v = f.vinculo_id, btn = tx.querySelector("[data-coment]"), hueco = tx.querySelector(".com-hueco");
+  const abrir = !charlando.has(v);
+  if (abrir) charlando.add(v); else charlando.delete(v);
+  btn.setAttribute("aria-expanded", String(abrir));
+  hueco.innerHTML = abrir ? panelComentarios(f) : "";
+}
+async function comentar(form) {
+  const tx = form.closest(".tx"), f = filas.find((x) => x.vinculo_id === tx.dataset.v);
+  const area = form.querySelector("textarea"), er = form.querySelector(".error"), boton = form.querySelector('button[type="submit"]');
+  const cuerpo = area.value.trim();
+  if (!f) return;
+  if (!cuerpo) { er.textContent = "Escribí el comentario."; er.hidden = false; return; }
+  er.hidden = true; boton.disabled = true;
+  try {
+    await R("comentar", { p_texto: f.texto.id, p_cuerpo: cuerpo });
+    area.value = ""; area.focus({ preventScroll: true });   // vacío y con el foco: así el próximo dibujo no vuelve a poner lo enviado
+    aviso("Comentario agregado.");
+  } catch (x) { boton.disabled = false; er.textContent = mensaje(x); er.hidden = false; return; }
+  await actualizar();
+}
+async function borrarComentario(id) {
+  if (!(await confirmar({ titulo: "Borrar el comentario", texto: "Se borra para todo el grupo. No se puede deshacer.", ok: "Borrar", peligro: true }))) return;
+  try { await R("borrar_comentario", { p_comentario: id }); aviso("Comentario borrado."); } catch (e) { aviso(mensaje(e), "mal"); }
+  await actualizar();
 }
 
 function motivo(tx, f) {

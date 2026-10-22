@@ -1,14 +1,14 @@
-// Una combinación: sus textos validados y los que están en debate, con los votos de cada uno.
+// Una combinación: todos sus textos, completos: primero los validados y después los que están en debate, con los votos de cada uno.
 // Se actualiza sola cuando alguien del grupo vota o propone; al volver a dibujar se conserva lo que estabas haciendo
-// (qué textos tenías abiertos, un motivo a medio escribir, dónde estabas parado en la página).
+// (qué textos habías cerrado, un motivo a medio escribir, dónde estabas parado en la página).
 import { R, E, yo, grupo, esAdmin } from "./estado.js";
 import { mensaje } from "./api.js";
 import { PLANETAS, NOMBRE, circuloDeco, etiqueta, enRuta, llave } from "./planetas.js";
 import { selectorPlanetas } from "./selector.js";
 import { esc, $, $$, aviso, plural, hace, confirmar, pedirTexto, dialogo, cuerpoHTML, faltan, reducido } from "./ui.js";
 
-let raiz = null, ids = [], filas = [], grilla = [], ficha = 0, ultimaAzar = null;
-const abiertos = new Set();          // vínculos con el texto completo abierto
+let raiz = null, ids = [], filas = [], grilla = [], ficha = 0;
+const cerrados = new Set();          // vínculos cuyo texto largo cerraste vos (por defecto se ve todo completo)
 let firmas = new Map();              // vínculo → «estado|a favor|en contra», para marcar lo que cambió
 let primera = true;
 
@@ -16,7 +16,7 @@ const pidePrestado = () => ids.length === 1;
 const partes = () => ({ p_a: ids[0], p_b: ids[1] || null });
 
 export async function montar(el, combo) {
-  raiz = el; ids = combo; filas = []; grilla = []; firmas = new Map(); primera = true; ultimaAzar = null;
+  raiz = el; ids = combo; filas = []; grilla = []; firmas = new Map(); primera = true;
   raiz.innerHTML = `<section class="pantalla" aria-labelledby="tCombo"><p class="cab-sup"><a class="atras" href="#grilla">‹ Grilla</a></p>
     <h2 id="tCombo" class="combo-t">${ids.map((i) => circuloDeco(i)).join("")}<span>${esc(etiqueta(ids))}</span></h2>
     <div id="cBody"><p class="sub">Cargando…</p></div></section>`;
@@ -65,7 +65,7 @@ function resumenEstado(f) {
 
 function tarjeta(f) {
   const t = f.texto, mio = f.mi_voto, id = f.vinculo_id;
-  const largo = t.palabras > 90, abierto = abiertos.has(id) || !largo;
+  const largo = t.palabras > 90, abierto = !cerrados.has(id) || !largo;
   const otrosVotos = [...f.favor, ...f.contra].some((v) => v.nombre !== yo().nombre);
   const puedeEditar = esAdmin() || t.cargado_por_id === yo().id;
   const puedeQuitar = esAdmin() || (t.cargado_por_id === yo().id && !otrosVotos);
@@ -126,8 +126,7 @@ function pintar() {
     : `<p class="vacio-msg">Todavía no hay ningún texto para <strong>${esc(etiqueta(ids))}</strong>. ¿Tenés uno que le quede bien? Proponelo: tu voto a favor ya cuenta, y los demás pueden sumarse.</p>`;
   $("#cBody").innerHTML = `
     <p class="sub">${val.length ? plural(val.length, "texto validado", "textos validados") : "Sin textos validados"}${deb.length ? ` · ${deb.length} en debate` : ""}</p>
-    <p class="acciones"><a class="boton" href="#proponer/${enRuta(ids)}">Proponer un texto</a>
-      ${val.length ? `<button type="button" class="boton sec" id="azar">${val.length > 1 ? "Un texto al azar" : "Ir al texto validado"}</button>` : ""}</p>
+    <p class="acciones"><a class="boton" href="#proponer/${enRuta(ids)}">Proponer un texto</a></p>
     ${vacio}
     ${val.length ? `<h3 class="seccion">Validados <span>${val.length}</span></h3><div class="lista">${val.map(tarjeta).join("")}</div>` : ""}
     ${deb.length ? `<h3 class="seccion">En debate <span>${deb.length}</span></h3><div class="lista">${deb.map(tarjeta).join("")}</div>` : ""}
@@ -155,7 +154,6 @@ function conectar() {
   const cuerpo = $("#cBody");
   cuerpo.onclick = async (e) => {
     const tx = e.target.closest(".tx");
-    if (e.target.closest("#azar")) return azar();
     if (!tx) return;
     const v = tx.dataset.v, f = filas.find((x) => x.vinculo_id === v);
     if (!f) return;
@@ -185,7 +183,7 @@ function alternar(tx, v) {
   const cu = tx.querySelector(".tx-cuerpo"), b = tx.querySelector("[data-leer]");
   const abrir = !cu.classList.contains("abierto");
   cu.classList.toggle("abierto", abrir);
-  if (abrir) abiertos.add(v); else abiertos.delete(v);
+  if (abrir) cerrados.delete(v); else cerrados.add(v);
   b.setAttribute("aria-expanded", String(abrir));
   b.textContent = abrir ? "Mostrar menos" : `Leer completo (${filas.find((x) => x.vinculo_id === v).texto.palabras} palabras)`;
 }
@@ -204,7 +202,7 @@ async function votar(v, valor, texto = null) {
   const antes = filas.find((x) => x.vinculo_id === v);
   try {
     const r = await R("votar", { p_vinculo: v, p_valor: valor, p_motivo: texto });
-    if (r.estado === "validado" && antes && antes.estado !== "validado") aviso("Quedó validado. ¡Ya entra en el azar de esta combinación!");
+    if (r.estado === "validado" && antes && antes.estado !== "validado") aviso("Quedó validado.");
     else if (r.estado !== "validado" && antes && antes.estado === "validado") aviso("Volvió a «en debate»: ya no llega a la mitad de votos a favor.");
     else aviso(valor === "favor" ? "Votaste a favor." : "Votaste en contra.");
   } catch (e) { aviso(mensaje(e), "mal"); }
@@ -219,7 +217,7 @@ async function quitarVoto(v) {
 async function validarYa(f) {
   const t = f.texto;
   if (!(await confirmar({ titulo: "Validar ahora", texto: `«${t.titulo}» queda validado para ${etiqueta(ids)} sin esperar los votos, y tu voto cuenta a favor. Los demás pueden seguir votando, pero ya no lo mueven. Cuando quieras lo devolvés a debate.`, ok: "Validar" }))) return;
-  try { await R("validar_ya", { p_vinculo: f.vinculo_id }); aviso("Quedó validado por vos. Ya entra en el azar de esta combinación."); }
+  try { await R("validar_ya", { p_vinculo: f.vinculo_id }); aviso("Quedó validado por vos."); }
   catch (e) { aviso(mensaje(e), "mal"); }
   await actualizar();
 }
@@ -229,25 +227,6 @@ async function devolver(f) {
     aviso(r.estado === "validado" ? "Sigue validado: los votos solos alcanzan." : "Volvió a «en debate»: ahora se juzga solo por los votos.");
   } catch (e) { aviso(mensaje(e), "mal"); }
   await actualizar();
-}
-
-function azar() {
-  const val = filas.filter((f) => f.estado === "validado");
-  if (!val.length) return;
-  let pool = val.filter((f) => f.vinculo_id !== ultimaAzar);
-  if (!pool.length) pool = val;
-  const f = pool[Math.floor(Math.random() * pool.length)];
-  ultimaAzar = f.vinculo_id;
-  abiertos.add(f.vinculo_id);
-  const tx = $(`.tx[data-v="${CSS.escape(f.vinculo_id)}"]`);
-  if (!tx) return;
-  tx.querySelector(".tx-cuerpo").classList.add("abierto");
-  const b = tx.querySelector("[data-leer]");
-  if (b) { b.setAttribute("aria-expanded", "true"); b.textContent = "Mostrar menos"; }
-  tx.scrollIntoView({ block: "start", behavior: reducido() ? "auto" : "smooth" });
-  const h = tx.querySelector(".tx-tit"); h.setAttribute("tabindex", "-1"); h.focus({ preventScroll: true });
-  marcar(f.vinculo_id);
-  aviso(`${f.texto.titulo}, de ${f.texto.autor}.`);
 }
 
 async function accion(que, f) {

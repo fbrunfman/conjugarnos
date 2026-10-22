@@ -76,9 +76,10 @@ with sync_playwright() as p:
     chk(fede.locator('.parejas a.chip.con').count()==1 and 'Saturno + Plutón' in fede.inner_text('.parejas a.chip.con'),'planeta solo: muestra sus parejas, con la que tiene texto')
     chk('Sin textos validados' in fede.inner_text('.sub'),'Saturno solo no tiene textos propios')
     fede.screenshot(path=S+'/e1_saturno_solo.png',full_page=True)
-    # azar
-    fede.goto(URL+'/#c/saturn-pluto'); fede.wait_for_selector('.tx'); fede.click('#azar'); 
-    chk(fede.locator('.tx-cuerpo.abierto').count()==1,'azar: abre el texto')
+    # no hay texto «al azar»: la combinación muestra todos sus textos, completos
+    fede.goto(URL+'/#c/saturn-pluto'); fede.wait_for_selector('.tx')
+    chk(fede.locator('#azar').count()==0 and 'azar' not in fede.inner_text('#cBody').lower(),'no hay botón ni texto «al azar»')
+    chk(fede.locator('.tx').count()>=1 and fede.locator('.tx-cuerpo.abierto').count()==fede.locator('.tx').count(),'todos los textos se muestran completos')
     fede.screenshot(path=S+'/e1_combo_validado.png',full_page=True)
     # errores de consola
     for n,e in (('fede',ef),('ana',ea),('beto',eb),('cami',ec)): chk(not e, f'{n}: sin errores de consola {e[:2]}')

@@ -35,10 +35,11 @@ with sync_playwright() as p:
     fede,ef,_=vuelve('Federico'); ana,ea,ca=vuelve('Ana'); beto,eb,_=vuelve('Beto')
     chk('Federico' in fede.inner_text('#quien'),'«link para volver» entra como la persona')
     chk(fede.url.endswith('#grilla'),'el link para volver no deja la clave en la barra de direcciones')
-    # texto largo: colapsado y se abre
+    # texto largo: se ve completo, y se puede cerrar y volver a abrir
     ana.goto(URL+'/#c/moon-neptune'); ana.wait_for_selector('.tx')
-    chk(ana.locator('.tx-cuerpo:not(.abierto)').count()==1 and 'Leer completo (200 palabras)' in ana.inner_text('[data-leer]'),'texto largo: colapsado con «Leer completo»')
-    ana.click('[data-leer]'); chk(ana.locator('.tx-cuerpo.abierto').count()==1 and ana.get_attribute('[data-leer]','aria-expanded')=='true','se abre')
+    chk(ana.locator('.tx-cuerpo.abierto').count()==1 and 'Mostrar menos' in ana.inner_text('[data-leer]'),'texto largo: se muestra completo desde el principio')
+    ana.click('[data-leer]'); chk(ana.locator('.tx-cuerpo:not(.abierto)').count()==1 and 'Leer completo (200 palabras)' in ana.inner_text('[data-leer]'),'se puede cerrar')
+    ana.click('[data-leer]'); chk(ana.locator('.tx-cuerpo.abierto').count()==1 and ana.get_attribute('[data-leer]','aria-expanded')=='true','y volver a abrir')
     # borrador de motivo sobrevive a un cambio en vivo
     beto.goto(URL+'/#c/moon-neptune'); beto.wait_for_selector('.tx'); beto.click('[data-voto=contra]'); beto.fill('.v-motivo input','escribiendo a medias')
     rpc('votar',p_clave=claves['Cami'],p_vinculo=v1,p_valor='contra',p_motivo='cambió de idea')

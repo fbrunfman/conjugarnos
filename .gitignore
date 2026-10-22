@@ -1,0 +1,4 @@
+node_modules/
+dev/datos/
+test/e2e/salida/
+.DS_Store

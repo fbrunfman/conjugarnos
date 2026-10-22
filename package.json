@@ -1,0 +1,20 @@
+{
+  "name": "conjugarnos",
+  "version": "1.0.0",
+  "description": "Biblioteca viva: textos para cada combinación de planetas, votados entre amigos.",
+  "scripts": {
+    "dev": "node dev/server.mjs",
+    "test:sql": "node test/sql.test.mjs",
+    "build:vendor": "esbuild vendor/realtime-entrada.js --bundle --minify --format=esm --platform=browser --target=es2020 --outfile=static/vendor/realtime.js",
+    "test": "node test/sql.test.mjs && node test/realtime.test.mjs",
+    "test:e2e": "echo \"Con el servidor andando (npm run dev) y Playwright para Python: python3 test/e2e/1_cuatro_personas_en_vivo.py (y 2, 3)\""
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.11",
+    "@supabase/realtime-js": "^2.118.0",
+    "esbuild": "^0.28.2",
+    "ws": "^8.22.0"
+  },
+  "private": true,
+  "type": "module"
+}

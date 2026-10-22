@@ -1,0 +1,25 @@
+# Una vez por día llama a la función ping() de la base. Supabase gratis pausa los proyectos con poca actividad
+# (según su documentación, unos pocos pedidos por día durante la semana alcanzan para que no se pause).
+# Hace falta cargar dos «secrets» en el repositorio (Settings → Secrets and variables → Actions):
+#   SUPABASE_URL              la dirección del proyecto, por ejemplo https://abcdefgh.supabase.co
+#   SUPABASE_PUBLISHABLE_KEY  la clave pública (la misma de static/config.js)
+name: Mantener despierta la base
+on:
+  schedule:
+    - cron: "17 12 * * *"
+  workflow_dispatch: {}
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Llamar a ping()
+        env:
+          URL: ${{ secrets.SUPABASE_URL }}
+          KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          if [ -z "$URL" ] || [ -z "$KEY" ]; then echo "Faltan los secrets SUPABASE_URL y SUPABASE_PUBLISHABLE_KEY"; exit 1; fi
+          extra=()
+          case "$KEY" in eyJ*) extra=(-H "Authorization: Bearer $KEY");; esac
+          code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$URL/rest/v1/rpc/ping" -H "apikey: $KEY" "${extra[@]}" -H "content-type: application/json" -d '{}')
+          echo "La base respondió: $code"
+          test "$code" = "200"
